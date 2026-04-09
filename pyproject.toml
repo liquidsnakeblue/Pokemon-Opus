@@ -46,15 +46,11 @@ turn_delay_seconds = 0.5
 save_interval = 50
 
 [tool.pokemon-opus.llm]
-client_base_url = "https://api.anthropic.com/v1"
-agent_model = "claude-opus-4-20250514"
-strategist_model = "claude-opus-4-20250514"
-memory_model = "claude-opus-4-20250514"
-battle_model = "claude-opus-4-20250514"
-
-# Per-model base URL overrides (uncomment to use local models)
-# battle_base_url = "http://192.168.4.245:8082/v1"
-# memory_base_url = "http://192.168.4.245:8082/v1"
+client_base_url = "http://192.168.4.245:30002/v1"
+agent_model = "google/gemma-4-31b"
+strategist_model = "google/gemma-4-31b"
+memory_model = "google/gemma-4-31b"
+battle_model = "google/gemma-4-31b"
 
 [tool.pokemon-opus.llm.agent_sampling]
 temperature = 0.7

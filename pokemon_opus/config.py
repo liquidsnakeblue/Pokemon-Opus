@@ -109,7 +109,11 @@ class Config(BaseSettings):
 
     def model_post_init(self, __context) -> None:
         if self.client_api_key is None:
-            self.client_api_key = os.environ.get("ANTHROPIC_API_KEY")
+            self.client_api_key = (
+                os.environ.get("ANTHROPIC_API_KEY")
+                or os.environ.get("LOCAL_LLM_API_KEY")
+                or os.environ.get("OPENROUTER_API_KEY")
+            )
         Path(self.game_workdir).mkdir(parents=True, exist_ok=True)
 
     def base_url_for(self, role: str) -> str:

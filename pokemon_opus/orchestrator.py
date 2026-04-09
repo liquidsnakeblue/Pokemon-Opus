@@ -63,7 +63,7 @@ class Orchestrator:
     def explore_agent(self):
         if self._explore_agent is None:
             from .agents.explore import ExploreAgent
-            self._explore_agent = ExploreAgent(self.config, self.llm)
+            self._explore_agent = ExploreAgent(self.config, self.llm, game_client=self.game)
         return self._explore_agent
 
     @property
