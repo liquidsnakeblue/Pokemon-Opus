@@ -71,6 +71,18 @@ class StreamServer:
             try:
                 # Send current state on connect
                 await ws.send_json({"type": "connected", "viewers": len(self._clients)})
+                # Send cached state so new viewers immediately see current game state
+                if self._latest_state:
+                    await ws.send_json({
+                        "type": "turn_complete",
+                        "turn": self._latest_state.get("turn", 0),
+                        "mode": self._latest_state.get("mode", "explore"),
+                        "actions": [],
+                        "state": self._latest_state,
+                        "screenshot": "",
+                        "reasoning": self._latest_state.get("last_reasoning", ""),
+                        "deltas": {},
+                    })
                 # Keep alive — client doesn't send data, just receives
                 while True:
                     try:
