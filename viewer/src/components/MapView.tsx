@@ -12,14 +12,22 @@ const GRID_LINE = 0.5;
 
 // Tile colors — high contrast, distinct types
 const COLORS: Record<string, { fill: string; stroke?: string }> = {
-  '.': { fill: '#e8e0d4', stroke: '#d0c8bc' },   // walkable — warm white
-  '#': { fill: '#6b6b7b', stroke: '#5a5a6a' },   // wall — medium gray
-  '~': { fill: '#7bc67b', stroke: '#6ab66a' },   // grass — green
-  'W': { fill: '#5b9bd5', stroke: '#4a8ac4' },   // water — blue
+  '.': { fill: '#e8e0d4', stroke: '#d8d0c4' },   // walkable — warm white
+  '#': { fill: '#6b6b7b', stroke: '#5a5a6a' },   // wall/unknown solid — gray
+  '~': { fill: '#5abf5a', stroke: '#4aaf4a' },   // tall grass — bright green
+  'W': { fill: '#4a90d0', stroke: '#3a80c0' },   // water — blue
   'P': { fill: '#e8e0d4' },                       // player tile (walkable underneath)
   'N': { fill: '#e8e0d4' },                       // NPC tile (walkable underneath)
-  'D': { fill: '#e8e0d4', stroke: '#40c0e0' },   // door/warp — cyan border
-  '?': { fill: '#2a2a35' },                       // unknown — dark
+  'I': { fill: '#e8e0d4' },                       // Item (walkable underneath)
+  'O': { fill: '#e8e0d4' },                       // Object (walkable underneath)
+  'D': { fill: '#f0c860', stroke: '#d0a840' },   // door/warp — gold
+  'F': { fill: '#d4a0b0', stroke: '#c490a0' },   // flowers — pink
+  'f': { fill: '#8b7060', stroke: '#7b6050' },   // fence — brown
+  'B': { fill: '#505068', stroke: '#404058' },   // building — dark blue-gray
+  'S': { fill: '#c0b090', stroke: '#b0a080' },   // sign/mailbox — tan
+  'T': { fill: '#3a7a3a', stroke: '#2a6a2a' },   // tree — dark green
+  'L': { fill: '#a0a080', stroke: '#909070' },   // ledge — olive
+  '?': { fill: '#1a1a25' },                       // unknown (dialog) — very dark
   'X': { fill: '#12121a' },                       // border — near black
 };
 
@@ -55,6 +63,37 @@ function NpcMarker({ x, y, size }: { x: number; y: number; size: number }) {
       <circle cx={cx - r * 0.35} cy={cy - r * 0.15} r={r * 0.09} fill="#1a1a2e" />
       <circle cx={cx + r * 0.35} cy={cy - r * 0.15} r={r * 0.09} fill="#1a1a2e" />
     </>
+  );
+}
+
+// Item marker (Poke Ball-like circle)
+function ItemMarker({ x, y, size }: { x: number; y: number; size: number }) {
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const r = size * 0.3;
+  return (
+    <>
+      <circle cx={cx} cy={cy} r={r} fill="#e04040" stroke="#c03030" strokeWidth={0.6} />
+      <line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke="white" strokeWidth={0.8} />
+      <circle cx={cx} cy={cy} r={r * 0.25} fill="white" />
+    </>
+  );
+}
+
+// Object marker (square)
+function ObjectMarker({ x, y, size }: { x: number; y: number; size: number }) {
+  const s = size * 0.45;
+  return (
+    <rect
+      x={x + (size - s) / 2}
+      y={y + (size - s) / 2}
+      width={s}
+      height={s}
+      fill="#7090b0"
+      stroke="#506880"
+      strokeWidth={0.6}
+      rx={1}
+    />
   );
 }
 
@@ -135,11 +174,17 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
             })
           )}
 
-          {/* NPC markers (render on top of tiles) */}
+          {/* Sprite markers (render on top of tiles) */}
           {gridData.grid.map((row, y) =>
             row.slice(0, gridData.cols).map((cell, x) => {
               if (cell === 'N') {
                 return <NpcMarker key={`npc-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
+              }
+              if (cell === 'I') {
+                return <ItemMarker key={`item-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
+              }
+              if (cell === 'O') {
+                return <ObjectMarker key={`obj-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
               }
               return null;
             })
