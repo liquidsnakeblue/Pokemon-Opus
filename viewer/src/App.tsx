@@ -10,7 +10,7 @@ import { StatsBar } from '@/components/StatsBar';
 import { MilestonesPanel } from '@/components/MilestonesPanel';
 
 export default function App() {
-  const { connected, viewers, gameState, screenshot, reasoning, events } =
+  const { connected, viewers, gameState, screenshot, reasoning, reasoningHistory, events } =
     useWebSocket();
 
   return (
@@ -36,7 +36,7 @@ export default function App() {
       {/* Main 3-column layout */}
       {/* Left: Reasoning */}
       <div className="min-h-0 overflow-hidden">
-        <ReasoningPanel reasoning={reasoning} turn={gameState?.turn ?? 0} />
+        <ReasoningPanel reasoning={reasoning} reasoningHistory={reasoningHistory} turn={gameState?.turn ?? 0} />
       </div>
 
       {/* Center: Game screen */}

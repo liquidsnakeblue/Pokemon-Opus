@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WSEvent, GameState } from '@/lib/types';
 
+export interface ReasoningEntry {
+  turn: number;
+  text: string;
+  actions?: string[];
+  timestamp: number;
+}
+
 interface UseWebSocketReturn {
   connected: boolean;
   viewers: number;
   gameState: GameState | null;
   screenshot: string;
   reasoning: string;
+  reasoningHistory: ReasoningEntry[];
   events: WSEvent[];
 }
 
@@ -21,6 +29,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [screenshot, setScreenshot] = useState('');
   const [reasoning, setReasoning] = useState('');
+  const [reasoningHistory, setReasoningHistory] = useState<ReasoningEntry[]>([]);
   const [events, setEvents] = useState<WSEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE_DELAY);
@@ -46,6 +55,18 @@ export function useWebSocket(): UseWebSocketReturn {
           setGameState(data.state);
           setScreenshot(data.screenshot);
           setReasoning(data.reasoning);
+          if (data.reasoning) {
+            setReasoningHistory(prev => {
+              const entry: ReasoningEntry = {
+                turn: data.state?.turn ?? 0,
+                text: data.reasoning,
+                actions: data.actions,
+                timestamp: Date.now(),
+              };
+              const next = [...prev, entry];
+              return next.length > 50 ? next.slice(-50) : next;
+            });
+          }
           break;
 
         case 'reasoning_chunk':
@@ -114,5 +135,5 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, [connect]);
 
-  return { connected, viewers, gameState, screenshot, reasoning, events };
+  return { connected, viewers, gameState, screenshot, reasoning, reasoningHistory, events };
 }

@@ -10,12 +10,12 @@ export function GameScreen({ screenshot, mode }: GameScreenProps) {
         <span>Game</span>
         <span className="ml-auto text-[10px] text-text-tertiary uppercase">{mode}</span>
       </div>
-      <div className="flex-1 flex items-center justify-center bg-black p-1">
+      <div className="flex-1 flex items-center justify-center bg-black p-1 min-h-0">
         {screenshot ? (
           <img
             src={`data:image/png;base64,${screenshot}`}
             alt="Game Screen"
-            className="max-w-full max-h-full"
+            className="w-full h-full object-contain"
             style={{ imageRendering: 'pixelated' }}
           />
         ) : (
