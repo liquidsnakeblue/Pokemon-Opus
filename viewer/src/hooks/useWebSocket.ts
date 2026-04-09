@@ -33,7 +33,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [events, setEvents] = useState<WSEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE_DELAY);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const addEvent = useCallback((event: WSEvent) => {
     setEvents(prev => {
@@ -57,8 +57,16 @@ export function useWebSocket(): UseWebSocketReturn {
           setReasoning(data.reasoning);
           if (data.reasoning) {
             setReasoningHistory(prev => {
+              const turn = data.state?.turn ?? 0;
+              // Deduplicate: skip if last entry has the same turn and text
+              if (prev.length > 0) {
+                const last = prev[prev.length - 1];
+                if (last.turn === turn && last.text === data.reasoning) {
+                  return prev;
+                }
+              }
               const entry: ReasoningEntry = {
-                turn: data.state?.turn ?? 0,
+                turn,
                 text: data.reasoning,
                 actions: data.actions,
                 timestamp: Date.now(),

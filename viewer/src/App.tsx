@@ -35,7 +35,11 @@ export default function App() {
         {/* Left column */}
         <div className="flex flex-col gap-2 w-[460px] shrink-0 min-h-0">
           <GameScreen mode={gameState?.mode ?? 'explore'} />
-          <MapView map={gameState?.map} />
+          <MapView
+            tileGrid={gameState?.tile_grid}
+            mapName={gameState?.player.map_name}
+            position={gameState?.player.position}
+          />
           <TeamPanel party={gameState?.party ?? []} />
         </div>
 

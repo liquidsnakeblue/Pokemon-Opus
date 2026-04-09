@@ -62,6 +62,12 @@ class GameClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_tiles(self) -> Dict[str, Any]:
+        """Get the on-screen tile buffer with collision classification."""
+        resp = await self._client.get("/tiles")
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Screenshots ────────────────────────────────────────────────────
 
     async def screenshot(self) -> bytes:

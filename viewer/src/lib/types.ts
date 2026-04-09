@@ -112,6 +112,8 @@ export interface GameState {
   last_reasoning: string;
   last_actions: string[];
   map?: MapData;
+  tile_grid?: string[][];  // 20x18 classified grid from emulator
+  tile_sprites?: [number, number][];  // NPC positions
 }
 
 export interface Deltas {

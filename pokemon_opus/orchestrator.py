@@ -258,6 +258,13 @@ class Orchestrator:
         # Inject map data from the map graph
         if self.map_mgr:
             serialized["map"] = self._serialize_map()
+        # Inject live tile grid from emulator
+        try:
+            tile_data = await self.game.get_tiles()
+            serialized["tile_grid"] = tile_data.get("grid", [])
+            serialized["tile_sprites"] = tile_data.get("sprites", [])
+        except Exception as e:
+            logger.debug(f"Tile read failed: {e}")
         await self.stream.broadcast_turn_complete(
             turn=self.gs.turn_count,
             mode=self.gs.game_mode.value,
