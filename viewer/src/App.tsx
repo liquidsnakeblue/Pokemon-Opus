@@ -8,6 +8,7 @@ import { InventoryPanel } from '@/components/InventoryPanel';
 import { BadgeTimeline } from '@/components/BadgeTimeline';
 import { StatsBar } from '@/components/StatsBar';
 import { MilestonesPanel } from '@/components/MilestonesPanel';
+import { MapView } from '@/components/MapView';
 
 export default function App() {
   const { connected, viewers, gameState, screenshot, reasoning, reasoningHistory, events } =
@@ -39,14 +40,17 @@ export default function App() {
         <ReasoningPanel reasoning={reasoning} reasoningHistory={reasoningHistory} turn={gameState?.turn ?? 0} />
       </div>
 
-      {/* Center: Game screen */}
-      <div className="min-h-0 overflow-hidden flex flex-col gap-2">
-        <GameScreen screenshot={screenshot} mode={gameState?.mode ?? 'explore'} />
-        <TeamPanel party={gameState?.party ?? []} />
+      {/* Center: Game screen + Team */}
+      <div className="min-h-0 flex flex-col gap-2 overflow-hidden">
+        <GameScreen mode={gameState?.mode ?? 'explore'} />
+        <div className="shrink-0">
+          <TeamPanel party={gameState?.party ?? []} />
+        </div>
       </div>
 
-      {/* Right: Objectives + Inventory + Milestones */}
-      <div className="min-h-0 overflow-hidden flex flex-col gap-2">
+      {/* Right: Map + Objectives + Inventory + Milestones */}
+      <div className="min-h-0 overflow-y-auto flex flex-col gap-2">
+        <MapView map={gameState?.map} />
         <ObjectivesPanel objectives={gameState?.objectives ?? []} />
         <InventoryPanel bag={gameState?.bag ?? []} money={gameState?.player.money ?? 0} />
         <MilestonesPanel milestones={gameState?.milestones ?? []} />

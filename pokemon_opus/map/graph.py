@@ -48,8 +48,13 @@ class MapGraph:
         self.edges: List[MapEdge] = []
         self._adjacency: Dict[int, Set[int]] = {}  # map_id -> set of connected map_ids
 
+    # Game Boy screen is 160x144 pixels, tiles are 16x16
+    # Visible area is 10 wide x 9 tall, player roughly centered
+    VIEWPORT_HALF_W = 5  # tiles left/right of player
+    VIEWPORT_HALF_H = 4  # tiles above/below player
+
     def record_visit(self, map_id: int, name: str, turn: int, position: Tuple[int, int]) -> None:
-        """Record a visit to a map location."""
+        """Record a visit — marks the entire visible viewport as discovered."""
         if map_id not in self.nodes:
             self.nodes[map_id] = MapNode(
                 map_id=map_id,
@@ -61,7 +66,12 @@ class MapGraph:
         node = self.nodes[map_id]
         node.visits += 1
         node.last_visit_turn = turn
-        node.positions_visited.add(position)
+
+        # Mark all tiles visible on the Game Boy screen as discovered
+        py, px = position
+        for dy in range(-self.VIEWPORT_HALF_H, self.VIEWPORT_HALF_H + 1):
+            for dx in range(-self.VIEWPORT_HALF_W, self.VIEWPORT_HALF_W + 1):
+                node.positions_visited.add((py + dy, px + dx))
 
     def record_transition(
         self,

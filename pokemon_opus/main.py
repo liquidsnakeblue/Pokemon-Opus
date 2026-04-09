@@ -88,6 +88,9 @@ async def run() -> None:
         enable_cors=config.enable_cors,
     )
 
+    # Give stream server access to game client for MJPEG streaming
+    stream.set_game_client(game)
+
     # Initialize intelligence layers
     from .memory.manager import MemoryManager
     from .objectives.manager import ObjectiveManager

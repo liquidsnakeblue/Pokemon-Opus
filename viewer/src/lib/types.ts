@@ -47,6 +47,31 @@ export interface BagItem {
   quantity: number;
 }
 
+export interface MapLocation {
+  map_id: number;
+  name: string;
+  visits: number;
+  positions: [number, number][];
+  has_pokecenter: boolean;
+  has_pokemart: boolean;
+  has_gym: boolean;
+}
+
+export interface MapConnection {
+  from_id: number;
+  from_name: string;
+  to_id: number;
+  to_name: string;
+  times_traversed: number;
+}
+
+export interface MapData {
+  current_map_id: number;
+  current_position: [number, number];
+  locations: MapLocation[];
+  connections: MapConnection[];
+}
+
 export interface GameState {
   episode_id: string;
   turn: number;
@@ -86,6 +111,7 @@ export interface GameState {
   };
   last_reasoning: string;
   last_actions: string[];
+  map?: MapData;
 }
 
 export interface Deltas {

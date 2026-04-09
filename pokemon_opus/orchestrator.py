@@ -48,6 +48,7 @@ class Orchestrator:
         self.gs = GameState()
 
         # Agents (lazily imported to avoid circular deps)
+        self._intro_agent = None
         self._explore_agent = None
         self._battle_agent = None
         self._menu_agent = None
@@ -58,6 +59,13 @@ class Orchestrator:
         self._max_consecutive_errors: int = 5
 
     # ── Agent Access ───────────────────────────────────────────────────
+
+    @property
+    def intro_agent(self):
+        if self._intro_agent is None:
+            from .agents.intro import IntroAgent
+            self._intro_agent = IntroAgent(self.config, self.llm, game_client=self.game)
+        return self._intro_agent
 
     @property
     def explore_agent(self):
@@ -246,11 +254,15 @@ class Orchestrator:
 
         # Phase 10: Stream to viewer
         screenshot = await self.game.screenshot_base64()
+        serialized = self.gs.serialize()
+        # Inject map data from the map graph
+        if self.map_mgr:
+            serialized["map"] = self._serialize_map()
         await self.stream.broadcast_turn_complete(
             turn=self.gs.turn_count,
             mode=self.gs.game_mode.value,
             actions=actions,
-            state=self.gs.serialize(),
+            state=serialized,
             screenshot=screenshot,
             reasoning=reasoning,
             deltas=deltas.to_dict(),
@@ -268,6 +280,15 @@ class Orchestrator:
 
     async def _decide(self, raw_state: Dict[str, Any]) -> tuple[List[str], str]:
         """Route to the appropriate agent and return (actions, reasoning)."""
+
+        # Intro phase: party empty + no pokedex = still in intro/pre-starter
+        # Route through the intro agent which uses vision to detect screen type.
+        # If intro agent returns None, it detected overworld — fall through to explore.
+        if self.intro_agent.is_intro_phase(self.gs):
+            actions, reasoning = await self.intro_agent.decide(self.gs, raw_state)
+            if actions is not None:
+                return actions, reasoning
+            # Fall through to normal explore agent
 
         match self.gs.game_mode:
             case GameMode.DIALOG:
@@ -473,6 +494,39 @@ class Orchestrator:
         )
 
         return delta
+
+    # ── Map Serialization ──────────────────────────────────────────────
+
+    def _serialize_map(self) -> Dict[str, Any]:
+        """Serialize map graph data for the viewer."""
+        locations = []
+        for node in self.map_mgr.nodes.values():
+            locations.append({
+                "map_id": node.map_id,
+                "name": node.name,
+                "visits": node.visits,
+                "positions": [list(p) for p in node.positions_visited],
+                "has_pokecenter": node.has_pokecenter,
+                "has_pokemart": node.has_pokemart,
+                "has_gym": node.has_gym,
+            })
+        connections = []
+        for edge in self.map_mgr.edges:
+            from_node = self.map_mgr.nodes.get(edge.from_id)
+            to_node = self.map_mgr.nodes.get(edge.to_id)
+            connections.append({
+                "from_id": edge.from_id,
+                "from_name": from_node.name if from_node else "?",
+                "to_id": edge.to_id,
+                "to_name": to_node.name if to_node else "?",
+                "times_traversed": edge.times_traversed,
+            })
+        return {
+            "current_map_id": self.gs.map_id,
+            "current_position": list(self.gs.position),
+            "locations": locations,
+            "connections": connections,
+        }
 
     # ── Milestone Tracking ─────────────────────────────────────────────
 

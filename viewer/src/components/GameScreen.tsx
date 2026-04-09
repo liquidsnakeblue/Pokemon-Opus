@@ -1,28 +1,28 @@
 interface GameScreenProps {
-  screenshot: string;
   mode: string;
 }
 
-export function GameScreen({ screenshot, mode }: GameScreenProps) {
+const STREAM_URL = `http://${window.location.hostname}:3000/stream`;
+
+// 160x144 native, 4x upscale = 640x576
+const GAME_WIDTH = 640;
+const GAME_HEIGHT = 576;
+
+export function GameScreen({ mode }: GameScreenProps) {
   return (
-    <div className="panel flex-1 flex flex-col">
+    <div className="panel flex flex-col shrink-0">
       <div className="panel-header">
         <span>Game</span>
         <span className="ml-auto text-[10px] text-text-tertiary uppercase">{mode}</span>
       </div>
-      <div className="flex-1 flex items-center justify-center bg-black p-1 min-h-0">
-        {screenshot ? (
-          <img
-            src={`data:image/png;base64,${screenshot}`}
-            alt="Game Screen"
-            className="w-full h-full object-contain"
-            style={{ imageRendering: 'pixelated' }}
-          />
-        ) : (
-          <div className="text-text-tertiary text-sm font-mono">
-            Waiting for game...
-          </div>
-        )}
+      <div className="bg-black flex items-center justify-center">
+        <img
+          src={STREAM_URL}
+          alt="Game Screen"
+          width={GAME_WIDTH}
+          height={GAME_HEIGHT}
+          style={{ imageRendering: 'pixelated' }}
+        />
       </div>
     </div>
   );

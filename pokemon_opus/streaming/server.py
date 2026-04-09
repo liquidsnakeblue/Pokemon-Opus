@@ -1,6 +1,7 @@
 """
 Streaming Server — FastAPI + WebSocket for real-time viewer updates.
 Broadcasts game events, AI reasoning, and state snapshots to connected clients.
+Includes MJPEG endpoint for real-time frame streaming from the emulator.
 """
 
 from __future__ import annotations
@@ -8,13 +9,22 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Set
+import time
+from typing import Any, Dict, Optional, Set, TYPE_CHECKING
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+if TYPE_CHECKING:
+    from pokemon_opus.game_client import GameClient
+
 logger = logging.getLogger(__name__)
+
+# Frame streaming config
+STREAM_TARGET_FPS = 30
+STREAM_FRAME_INTERVAL = 1.0 / STREAM_TARGET_FPS
 
 
 class StreamServer:
@@ -24,8 +34,14 @@ class StreamServer:
         self.host = host
         self.port = port
         self._clients: Set[WebSocket] = set()
+        self._stream_clients: int = 0
         self._app = FastAPI(title="Pokemon-Opus Viewer API")
         self._event_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        self._game_client: Optional[GameClient] = None
+
+        # Frame cache to avoid redundant emulator polls when multiple viewers connect
+        self._frame_cache: bytes = b""
+        self._frame_cache_time: float = 0.0
 
         if enable_cors:
             self._app.add_middleware(
@@ -37,6 +53,10 @@ class StreamServer:
             )
 
         self._register_routes()
+
+    def set_game_client(self, client: GameClient) -> None:
+        """Set the game client for frame streaming."""
+        self._game_client = client
 
     @property
     def app(self) -> FastAPI:
@@ -74,6 +94,58 @@ class StreamServer:
         async def get_state():
             """Return the latest cached state (set by orchestrator)."""
             return self._latest_state or {"error": "No state available yet"}
+
+        @self._app.get("/stream")
+        async def mjpeg_stream():
+            """MJPEG stream of emulator frames at ~30fps."""
+            return StreamingResponse(
+                self._generate_frames(),
+                media_type="multipart/x-mixed-replace; boundary=frame",
+            )
+
+    # ── Frame Streaming ──────────────────────────────────────────────
+
+    async def _get_frame(self) -> bytes:
+        """Get a frame, using cache if fresh enough to avoid hammering the emulator."""
+        now = time.monotonic()
+        if now - self._frame_cache_time < STREAM_FRAME_INTERVAL * 0.5 and self._frame_cache:
+            return self._frame_cache
+
+        if not self._game_client:
+            return self._frame_cache or b""
+
+        try:
+            frame = await self._game_client.screenshot()
+            self._frame_cache = frame
+            self._frame_cache_time = now
+            return frame
+        except Exception:
+            return self._frame_cache or b""
+
+    async def _generate_frames(self):
+        """Async generator yielding MJPEG frames."""
+        self._stream_clients += 1
+        logger.info(f"MJPEG stream client connected ({self._stream_clients} active)")
+        try:
+            while True:
+                frame_start = time.monotonic()
+                png_bytes = await self._get_frame()
+                if png_bytes:
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/png\r\n"
+                        b"Content-Length: " + str(len(png_bytes)).encode() + b"\r\n"
+                        b"\r\n" + png_bytes + b"\r\n"
+                    )
+                # Sleep to maintain target FPS, accounting for fetch time
+                elapsed = time.monotonic() - frame_start
+                sleep_time = max(0.001, STREAM_FRAME_INTERVAL - elapsed)
+                await asyncio.sleep(sleep_time)
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+        finally:
+            self._stream_clients -= 1
+            logger.info(f"MJPEG stream client disconnected ({self._stream_clients} active)")
 
     # ── State Cache ────────────────────────────────────────────────────
 
