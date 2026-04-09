@@ -1,29 +1,23 @@
 @import 'tailwindcss';
 
-/* ============================================================
-   Pokemon-Opus Dark Theme
-   Inspired by SOTA Pokemon AI viewers (GPT-5.4, Gemini)
-   Dark background with Pokemon-colored accents
-   ============================================================ */
-
 @theme inline {
-  --color-bg-primary: #0a0e17;
-  --color-bg-secondary: #111827;
-  --color-bg-panel: #1a2332;
-  --color-bg-panel-header: #1e293b;
-  --color-bg-hover: #243044;
-  --color-border: #2a3a4e;
-  --color-border-bright: #3b5068;
+  --color-bg-primary: #0b1120;
+  --color-bg-secondary: #111a2e;
+  --color-bg-panel: #0f1729;
+  --color-bg-panel-header: #141e33;
+  --color-bg-hover: #1a2744;
+  --color-border: #1e2d4a;
+  --color-border-bright: #2a4060;
   --color-text-primary: #e2e8f0;
-  --color-text-secondary: #94a3b8;
-  --color-text-tertiary: #64748b;
-  --color-accent: #3b82f6;
-  --color-accent-bright: #60a5fa;
+  --color-text-secondary: #8b9fc0;
+  --color-text-tertiary: #506080;
+  --color-accent: #22d3ee;
+  --color-accent-bright: #67e8f9;
+  --color-accent-dim: #164e63;
   --color-hp-green: #22c55e;
   --color-hp-yellow: #eab308;
   --color-hp-red: #ef4444;
 
-  /* Type colors */
   --color-type-normal: #a8a878;
   --color-type-fire: #f08030;
   --color-type-water: #6890f0;
@@ -41,11 +35,7 @@
   --color-type-dragon: #7038f8;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body, #root {
   height: 100%;
@@ -56,10 +46,73 @@ html, body, #root {
 body {
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* Panel styling */
+.panel {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-accent);
+  background: var(--color-bg-panel-header);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel-body {
+  padding: 8px 12px;
+}
+
+/* Stat pill */
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.stat-pill .label {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.stat-pill .value {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-border-bright); }
+
+/* HP bar */
+.hp-bar {
+  height: 3px;
+  background: var(--color-bg-secondary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.hp-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}

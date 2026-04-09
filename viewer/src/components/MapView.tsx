@@ -52,10 +52,10 @@ export function MapView({ map }: MapViewProps) {
 
   if (!map || !bounds) {
     return (
-      <div className="panel flex flex-col" style={{ minHeight: 200 }}>
+      <div className="panel flex flex-col" style={{ minHeight: '200px' }}>
         <div className="panel-header"><span>Map</span></div>
         <div className="panel-body flex-1 flex items-center justify-center">
-          <span className="text-text-tertiary text-sm italic">No map data yet</span>
+          <span className="text-text-tertiary text-xs italic">No map data yet</span>
         </div>
       </div>
     );
@@ -89,7 +89,7 @@ export function MapView({ map }: MapViewProps) {
   }
 
   return (
-    <div className="panel flex flex-col" style={{ minHeight: 200 }}>
+    <div className="panel flex flex-col" style={{ minHeight: '200px' }}>
       <div className="panel-header">
         <span>Map</span>
         <span className="ml-auto text-[10px] text-text-tertiary font-mono">
