@@ -8,7 +8,7 @@ export function MilestonesPanel({ milestones }: MilestonesPanelProps) {
   const sorted = [...milestones].reverse();
 
   return (
-    <div className="panel flex flex-col h-full">
+    <div className="panel flex flex-col">
       <div className="panel-header">
         <span>Milestones</span>
       </div>

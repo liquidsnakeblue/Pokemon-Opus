@@ -30,23 +30,22 @@ export default function App() {
         />
       </div>
 
-      {/* Main content: 3 columns */}
-      <div className="flex-1 flex gap-3 px-4 pb-3 min-h-0 overflow-hidden">
-        {/* Left: Game + Map + Team — fixed proportions */}
-        <div className="flex flex-col gap-2 w-[480px] shrink-0 min-h-0 overflow-y-auto">
-          <div className="shrink-0">
-            <GameScreen mode={gameState?.mode ?? 'explore'} />
-          </div>
+      {/* Main content */}
+      <div className="flex-1 flex gap-3 px-4 pb-3 min-h-0">
+        {/* Left column */}
+        <div className="flex flex-col gap-2 w-[460px] shrink-0 min-h-0">
+          <GameScreen mode={gameState?.mode ?? 'explore'} />
           <MapView map={gameState?.map} />
-          <div className="shrink-0">
-            <TeamPanel party={gameState?.party ?? []} />
-          </div>
+          <TeamPanel party={gameState?.party ?? []} />
         </div>
 
-        {/* Center: Objectives + Log */}
+        {/* Center column */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
           <div className="shrink-0">
             <ObjectivesPanel objectives={gameState?.objectives ?? []} />
+          </div>
+          <div className="shrink-0">
+            <MilestonesPanel milestones={gameState?.milestones ?? []} />
           </div>
           <ReasoningPanel
             reasoning={reasoning}
@@ -55,13 +54,10 @@ export default function App() {
           />
         </div>
 
-        {/* Right: Resources + Milestones */}
-        <div className="flex flex-col gap-2 w-[280px] shrink-0 min-h-0">
+        {/* Right column */}
+        <div className="flex flex-col gap-2 w-[260px] shrink-0 min-h-0">
           <div className="shrink-0">
             <InventoryPanel bag={gameState?.bag ?? []} money={gameState?.player.money ?? 0} />
-          </div>
-          <div className="flex-1 min-h-0 flex flex-col">
-            <MilestonesPanel milestones={gameState?.milestones ?? []} />
           </div>
         </div>
       </div>
