@@ -1,0 +1,99 @@
+[project]
+name = "pokemon-opus"
+version = "0.1.0"
+description = "AI Pokemon Blue agent with SOTA viewer — powered by Opus"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.0",
+    "websockets>=12.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+pokemon-opus = "pokemon_opus.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+# =============================================================================
+# Pokemon-Opus Configuration
+# =============================================================================
+[tool.pokemon-opus]
+
+[tool.pokemon-opus.game]
+server_url = "http://localhost:8765"
+max_turns_per_episode = 10000
+turn_delay_seconds = 0.5
+save_interval = 50
+
+[tool.pokemon-opus.llm]
+client_base_url = "https://api.anthropic.com/v1"
+agent_model = "claude-opus-4-20250514"
+strategist_model = "claude-opus-4-20250514"
+memory_model = "claude-opus-4-20250514"
+battle_model = "claude-opus-4-20250514"
+
+# Per-model base URL overrides (uncomment to use local models)
+# battle_base_url = "http://192.168.4.245:8082/v1"
+# memory_base_url = "http://192.168.4.245:8082/v1"
+
+[tool.pokemon-opus.llm.agent_sampling]
+temperature = 0.7
+max_tokens = 4096
+
+[tool.pokemon-opus.llm.strategist_sampling]
+temperature = 0.5
+max_tokens = 8192
+
+[tool.pokemon-opus.llm.battle_sampling]
+temperature = 0.3
+max_tokens = 2048
+
+[tool.pokemon-opus.llm.memory_sampling]
+temperature = 0.4
+max_tokens = 4096
+
+[tool.pokemon-opus.memory]
+memory_file = "memories.md"
+max_memories_shown = 15
+knowledge_file = "knowledge.md"
+knowledge_update_interval = 100
+
+[tool.pokemon-opus.objectives]
+update_interval = 20
+max_objectives = 8
+completion_check_interval = 5
+
+[tool.pokemon-opus.map]
+state_file = "map_state.json"
+enable_tile_tracking = true
+screenshot_on_move = true
+
+[tool.pokemon-opus.streaming]
+host = "0.0.0.0"
+port = 3000
+enable_cors = true
+
+[tool.pokemon-opus.stuck_detection]
+max_turns_stuck = 200
+check_interval = 20
+warning_threshold = 50

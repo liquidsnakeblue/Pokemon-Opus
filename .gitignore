@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment
+.env
+
+# Data
+data/sprites/
+*.state
+game_files/
+
+# Logs
+*.log
+*.jsonl
+prompt_logs/
+
+# Node
+viewer/node_modules/
+viewer/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
