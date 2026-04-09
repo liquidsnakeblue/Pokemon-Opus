@@ -153,7 +153,6 @@ class IntroAgent:
         self.llm = llm_client
         self.game = game_client
         self._last_screen_type = ""
-        self._dialog_skip_count = 0
 
     def is_intro_phase(self, gs) -> bool:
         """Check if we're still in the intro phase based on RAM state."""
@@ -170,19 +169,7 @@ class IntroAgent:
         """
         client = game_client or self.game
 
-        # If LLM detected dialog/title last turn, skip LLM for a few turns
-        # and just press A. Re-check with vision every 3 turns to catch
-        # screen transitions. This saves ~2K tokens per skipped turn.
-        if self._last_screen_type in ("DIALOG", "TITLE", "MENU", "YES_NO"):
-            self._dialog_skip_count += 1
-            if self._dialog_skip_count < 3:
-                return (
-                    ["press_a", "press_a"],
-                    f"[INTRO] Mashing A (skip {self._dialog_skip_count}/3).",
-                )
-            self._dialog_skip_count = 0  # Time to re-check with vision
-
-        # Need vision to determine what's on screen.
+        # Every turn uses vision — the LLM decides what to do each time
         screenshot_b64 = None
         if client:
             try:
@@ -213,9 +200,6 @@ class IntroAgent:
             reasoning = parsed.get("reasoning", "")
             actions = parsed.get("actions", ["press_a"])
 
-            # Reset skip counter if screen type changed
-            if screen_type != self._last_screen_type:
-                self._dialog_skip_count = 0
             self._last_screen_type = screen_type
 
             # Overworld/starter — not an intro screen, signal the orchestrator
