@@ -221,13 +221,28 @@ class Orchestrator:
                 logger.warning(f"Memory synthesis failed: {e}")
 
         # Phase 9: Map update
-        if self.map_mgr and deltas.location_changed:
-            self.map_mgr.record_transition(
-                pre_snapshot["map_id"], post_snapshot["map_id"],
-                pre_snapshot["map_name"], post_snapshot["map_name"],
-                actions,
+        if self.map_mgr:
+            self.map_mgr.record_visit(
+                self.gs.map_id, self.gs.map_name, self.gs.turn_count, self.gs.position
             )
+            if deltas.location_changed:
+                self.map_mgr.record_transition(
+                    pre_snapshot["map_id"], post_snapshot["map_id"],
+                    pre_snapshot["map_name"], post_snapshot["map_name"],
+                    actions,
+                )
             self.gs.visited_maps.add(self.gs.map_id)
+
+        # Phase 9b: Objective completion check
+        if self.objectives and self.gs.turn_count % self.config.completion_check_interval == 0:
+            try:
+                completed = await self.objectives.check_completions(self.gs, deltas)
+                if completed:
+                    await self.stream.broadcast_objective_update(
+                        [o.model_dump() for o in self.gs.active_objectives]
+                    )
+            except Exception as e:
+                logger.warning(f"Objective check failed: {e}")
 
         # Phase 10: Stream to viewer
         screenshot = await self.game.screenshot_base64()
@@ -292,12 +307,13 @@ class Orchestrator:
         self.gs.player_name = player.get("name", "")
         self.gs.rival_name = player.get("rival_name", "")
         self.gs.money = player.get("money", 0)
-        self.gs.position = tuple(player.get("position", {}).get("y", 0),
-                                  player.get("position", {}).get("x", 0)) \
-            if isinstance(player.get("position"), dict) \
-            else (player.get("position", [0, 0])[0], player.get("position", [0, 0])[1]) \
-            if isinstance(player.get("position"), list) \
-            else (0, 0)
+        pos = player.get("position", {})
+        if isinstance(pos, dict):
+            self.gs.position = (pos.get("y", 0), pos.get("x", 0))
+        elif isinstance(pos, (list, tuple)) and len(pos) >= 2:
+            self.gs.position = (pos[0], pos[1])
+        else:
+            self.gs.position = (0, 0)
         self.gs.facing = player.get("facing", "down")
         self.gs.play_time = player.get("play_time", "")
 

@@ -88,14 +88,28 @@ async def run() -> None:
         enable_cors=config.enable_cors,
     )
 
+    # Initialize intelligence layers
+    from .memory.manager import MemoryManager
+    from .objectives.manager import ObjectiveManager
+    from .map.graph import MapGraph
+    from .context.builder import ContextBuilder
+
+    memory = MemoryManager(config, llm_client=llm, memory_file=config.memory_file)
+    objectives = ObjectiveManager(config, llm_client=llm)
+    map_graph = MapGraph()
+    map_graph.load(config.map_state_file)
+    context = ContextBuilder(memory_manager=memory, map_manager=map_graph)
+
     # Build orchestrator
     orchestrator = Orchestrator(
         config=config,
         game_client=game,
         stream=stream,
         llm_client=llm,
-        # Memory, objectives, map managers will be initialized later
-        # as they're built out in subsequent phases
+        memory_manager=memory,
+        objective_manager=objectives,
+        map_manager=map_graph,
+        context_builder=context,
     )
 
     # Generate initial objectives
