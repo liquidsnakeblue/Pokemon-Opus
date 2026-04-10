@@ -498,11 +498,18 @@ class ExploreAgent:
                     f"move off this tile, you may resume using `target` again."
                 )
 
-            # Repeated action warning
-            recent_actions = [tuple(e.actions) for e in gs.action_history[-3:]]
-            if len(recent_actions) >= 3 and len(set(recent_actions)) == 1:
+            # Repeated action warning — only count EXPLORE-mode turns.
+            # Battle turns in the history can share the same action list
+            # (e.g. three ['advance'] turns clearing post-KO text), and
+            # those aren't "stuck in the overworld" — they were valid
+            # battle progress.
+            recent_explore = [
+                tuple(e.actions) for e in gs.action_history[-6:]
+                if e.mode == "explore"
+            ][-3:]
+            if len(recent_explore) >= 3 and len(set(recent_explore)) == 1:
                 parts.append(
-                    f"\n⚠️ REPEATING: You've sent the same actions {recent_actions[0]} "
+                    f"\n⚠️ REPEATING: You've sent the same actions {recent_explore[0]} "
                     f"three times in a row. This is NOT working. Try something different."
                 )
 
@@ -661,12 +668,21 @@ class ExploreAgent:
         """Generate a fallback action that avoids repeating recent failures."""
         all_dirs = ["walk_up", "walk_down", "walk_left", "walk_right"]
 
-        # Find directions NOT tried recently
+        # Find directions NOT tried recently. Only look at explore-mode
+        # turns — battle/dialog/menu turns never emit walk_* so they'd
+        # be noise, and if the last 3 entries are all battle we want
+        # to keep scanning further back for actual explore attempts.
         tried = set()
-        for entry in gs.action_history[-3:]:
+        explore_seen = 0
+        for entry in reversed(gs.action_history):
+            if entry.mode != "explore":
+                continue
             for a in entry.actions:
                 if a.startswith("walk_"):
                     tried.add(a)
+            explore_seen += 1
+            if explore_seen >= 3:
+                break
 
         untried = [d for d in all_dirs if d not in tried]
         if untried:

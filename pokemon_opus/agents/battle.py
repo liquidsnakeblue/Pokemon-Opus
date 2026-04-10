@@ -138,6 +138,11 @@ class BattleAgent:
         if not analysis.get("move_effectiveness"):
             return False
 
+        # Post-KO or stale enemy state — the heuristic path has no way
+        # to emit `advance` dialog presses, so punt to the LLM which can.
+        if gs.enemy is None or gs.enemy.hp <= 0:
+            return False
+
         lead = gs.party[0]
         # Simple if: wild battle + lead is healthy + has a clear best move
         best_move = max(analysis["move_effectiveness"], key=lambda m: m["score"])
@@ -284,6 +289,22 @@ class BattleAgent:
                 if p.hp > 0:
                     parts.append(f"  {i}. {p.species} Lv{p.level} HP:{p.hp}/{p.max_hp}")
 
+        # Bag — RAM truth. The LLM needs to see this to pick `item`
+        # sensibly; picking item with no Potions in the bag wastes a
+        # turn. Show healing/battle-usable items first.
+        bag = getattr(gs, "bag", None) or []
+        if bag:
+            parts.append("\nBag (RAM truth — items you own):")
+            for item in bag:
+                if isinstance(item, dict):
+                    name = item.get("item", "?")
+                    qty = item.get("quantity", 1)
+                    parts.append(f"  • {name} ×{qty}")
+                else:
+                    parts.append(f"  • {item}")
+        else:
+            parts.append("\nBag: (empty — do NOT pick `item`)")
+
         # Type analysis summary
         if analysis.get("best_types"):
             good = ", ".join(f"{t} ({m}x)" for t, m in analysis["best_types"][:3])
@@ -345,8 +366,13 @@ class BattleAgent:
 
     def _use_item(self) -> List[str]:
         """Navigate to BAG and use first usable item."""
-        # BAG is bottom-left of battle menu
-        return ["press_down", "press_a", "press_a", "press_a", "wait_60"]
+        # BAG is bottom-left of battle menu. Home the cursor to FIGHT
+        # first — if the cursor is sitting on PKMN, a bare press_down
+        # would land on RUN (bottom-right) and pressing A would run
+        # away when we meant to use an item.
+        return self._home_cursor() + [
+            "press_down", "press_a", "press_a", "press_a", "wait_60"
+        ]
 
     # ── Type Guessing ──────────────────────────────────────────────────
 

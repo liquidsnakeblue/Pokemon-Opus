@@ -108,9 +108,12 @@ class ObjectiveManager:
             for o in active
         )
 
-        # Recent history
+        # Recent history — include mode tag so the LLM can distinguish
+        # overworld moves from battle/dialog/menu turns. Entries at the
+        # same position tagged [battle] are NOT evidence of being stuck
+        # in the overworld.
         history = "\n".join(
-            f"  T{e.turn} @ {e.map_name}: {e.actions[:3]}... — {e.reasoning[:60]}"
+            f"  T{e.turn} @ {e.map_name} [{e.mode}]: {e.actions[:3]}... — {e.reasoning[:60]}"
             for e in gs.action_history[-5:]
         )
 
