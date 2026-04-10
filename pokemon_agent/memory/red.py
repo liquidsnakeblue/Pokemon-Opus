@@ -10,10 +10,18 @@ Gen 1 text uses a custom character encoding (0x50 = terminator,
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pokemon_agent.emulator import Emulator
 from pokemon_agent.memory.reader import GameMemoryReader
+from pokemon_agent.memory.red_tile_data import (
+    BOOKSHELF_TILES,
+    DOOR_TILES,
+    LEDGE_TILES,
+    WARP_TILES,
+    WATER_TILE,
+    WATER_TILESETS,
+)
 
 
 # ===================================================================
@@ -110,6 +118,17 @@ ADDR_SPRITE_DATA2  = 0xC200   # 16 sprites × 16 bytes each (movement data)
 ADDR_NUM_SPRITES   = 0xD4E1   # number of sprites on current map
 SPRITE_COUNT_MAX   = 16
 SPRITE_ENTRY_SIZE  = 16
+
+# Per-map warp and sign tables — live in the map header after the
+# connection headers. Computed from pokered/ram/wram.asm anchored on
+# wCurMapTileset = 0xD367 and verified against live emulator memory.
+ADDR_NUM_WARPS     = 0xD3AE   # wNumberOfWarps (1 byte)
+ADDR_WARP_ENTRIES  = 0xD3AF   # wWarpEntries (32 × 4 bytes: Y, X, dest_warp, dest_map)
+ADDR_NUM_SIGNS     = 0xD4B0   # wNumSigns (1 byte)
+ADDR_SIGN_COORDS   = 0xD4B1   # wSignCoords (16 × 2 bytes: Y, X pairs)
+ADDR_SIGN_TEXT_IDS = 0xD4D1   # wSignTextIDs (16 bytes, parallel array)
+MAX_WARP_EVENTS    = 32
+MAX_BG_EVENTS      = 16
 
 
 # ===================================================================
@@ -744,26 +763,50 @@ class RedBlueMemoryReader(GameMemoryReader):
             "map_name": MAP_NAMES.get(map_id, f"Unknown Map ({map_id})"),
         }
 
-    # Tileset-specific tile-ID → visual-category overrides for the
-    # classified grid. Used by both the viewport and the full-map output.
-    # Tileset 0 = Overworld (Pallet Town, routes), Tileset 5 = Indoor.
-    _TILE_OVERRIDES = {
-        # Tileset 0: Overworld
-        0: {
-            85: "F", 86: "F", 87: "F",                       # flowers
-            14: "f", 15: "f", 31: "f",                       # fences
-            83: "B", 18: "B", 56: "B",                       # building roof
-            10: "B", 75: "B", 23: "B", 24: "B", 25: "B", 26: "B",  # building walls
-            11: "D", 12: "D", 27: "D", 28: "D",              # doors
-            70: "S", 71: "S",                                 # signs
-             3: "T",  5: "T",  6: "T",  8: "T",  9: "T",     # trees
-            20: "W",                                          # water
-            54: "L", 55: "L",                                 # ledges
-            82: "~",                                          # tall grass
-        },
-        # Tileset 5: Indoor (lab, houses) — populated as we learn
-        5: {},
-    }
+    # Per-tileset tile classification now lives in red_tile_data.py and is
+    # sourced from the pokered disassembly (door_tile_ids, warp_tile_ids,
+    # ledge_tiles, water_tilesets, bookshelf_tile_ids). read_tiles reads
+    # per-map warp and sign tables from RAM to get exact positions.
+
+    def _read_warps(self) -> List[Dict[str, int]]:
+        """Read the current map's warp table from RAM.
+
+        Returns a list of dicts, one per warp, with keys:
+          y, x          — tile coordinates on the current map
+          dest_warp     — warp id inside the destination map
+          dest_map      — destination map id
+        """
+        n = self.emu.read_u8(ADDR_NUM_WARPS)
+        n = min(n, MAX_WARP_EVENTS)
+        warps: List[Dict[str, int]] = []
+        for i in range(n):
+            base = ADDR_WARP_ENTRIES + i * 4
+            y = self.emu.read_u8(base + 0)
+            x = self.emu.read_u8(base + 1)
+            dest_warp = self.emu.read_u8(base + 2)
+            dest_map = self.emu.read_u8(base + 3)
+            warps.append({
+                "y": y, "x": x,
+                "dest_warp": dest_warp,
+                "dest_map": dest_map,
+            })
+        return warps
+
+    def _read_signs(self) -> List[Dict[str, int]]:
+        """Read the current map's sign table from RAM.
+
+        Signs are readable objects (flavor text, clues, etc.) placed at
+        specific (y, x) coordinates. Text IDs are in a parallel array.
+        """
+        n = self.emu.read_u8(ADDR_NUM_SIGNS)
+        n = min(n, MAX_BG_EVENTS)
+        signs: List[Dict[str, int]] = []
+        for i in range(n):
+            y = self.emu.read_u8(ADDR_SIGN_COORDS + i * 2 + 0)
+            x = self.emu.read_u8(ADDR_SIGN_COORDS + i * 2 + 1)
+            text_id = self.emu.read_u8(ADDR_SIGN_TEXT_IDS + i)
+            signs.append({"y": y, "x": x, "text_id": text_id})
+        return signs
 
     def read_tiles(self) -> Dict[str, Any]:
         """Read the current map via wOverworldMap and produce a classified grid.
@@ -893,8 +936,12 @@ class RedBlueMemoryReader(GameMemoryReader):
                 return -1
             return block[tile_offset]
 
-        # ── 4. Sprites ───────────────────────────────────────────────
+        # ── 4. Per-map objects from RAM ─────────────────────────────
+        # Warps and signs have authoritative (y, x) coordinates in the
+        # map header — we don't need to guess from tile IDs for these.
         npc_positions = self._read_sprite_positions()
+        warps = self._read_warps()
+        signs = self._read_signs()
 
         # ── 5. Dialog detection ─────────────────────────────────────
         # Dialog is a screen-layer concern (it overlays the rendered tile
@@ -920,60 +967,94 @@ class RedBlueMemoryReader(GameMemoryReader):
         dialog_start_game = dialog_start_8x8 // 2
         dialog_rows = set(range(dialog_start_game, GAME_GRID_H))
 
-        overrides = self._TILE_OVERRIDES.get(tileset_id, {})
+        # ── 6. Tileset-level static classification data ─────────────
+        # All sourced from pokered/data/tilesets/* — see red_tile_data.py.
+        warp_tile_ids = WARP_TILES.get(tileset_id, set())
+        door_tile_ids = DOOR_TILES.get(tileset_id, set())
+        bookshelf_tile_ids = BOOKSHELF_TILES.get(tileset_id, set())
+        has_water = tileset_id in WATER_TILESETS
+        # Ledges only fire in the overworld tileset (verified in
+        # engine/overworld/ledges.asm: HandleLedges returns early unless
+        # wCurMapTileset == OVERWORLD). In other tilesets the same tile
+        # IDs are used for furniture/decoration and must not classify
+        # as ledges.
+        ledges_active = (tileset_id == 0)
 
         def classify_tile(tile_id: int) -> str:
-            """Convert an 8×8 tile ID into its terrain category char."""
+            """Classify an 8×8 tile ID into a single-char category using
+            only *tile-intrinsic* information. Per-map overlays (warps,
+            signs, sprites, player) are applied afterwards with higher
+            priority.
+            """
             if tile_id < 0:
                 return "#"  # off-map → wall
-            if tile_id in overrides:
-                return overrides[tile_id]
+            # Grass tiles trigger wild encounters — highest-priority terrain
             if tile_id == grass_tile and grass_tile != 0xFF:
                 return "~"
+            # Water — only in tilesets that can contain it
+            if has_water and tile_id == WATER_TILE:
+                return "W"
+            # Ledges (one-way jumps) — only in the overworld tileset
+            if ledges_active and tile_id in LEDGE_TILES:
+                return "L"
+            # Warp / door tiles — stairs, doors, ladders, holes
+            if tile_id in warp_tile_ids or tile_id in door_tile_ids:
+                return "D"
+            # Interactive bookshelves / posters / statues
+            if tile_id in bookshelf_tile_ids:
+                return "O"
+            # Walkable collision list
             if tile_id in walkable_tiles:
                 return "."
             return "#"
 
-        # ── 6. Build the FULL MAP grid ───────────────────────────────
-        # The entire current map as a classified 2D array, indexed
-        # [map_y][map_x] in absolute game-cell coordinates.
+        # ── 7. Build per-map overlay dict keyed by (y, x) ───────────
+        # Higher priority overlays win. The order we populate this dict
+        # doesn't matter — we only write each cell once per priority.
+        overlays: Dict[Tuple[int, int], str] = {}
+
+        # Signs (lowest per-map overlay priority)
+        for sign in signs:
+            sy, sx = sign["y"], sign["x"]
+            if 0 <= sy < map_h_cells and 0 <= sx < map_w_cells:
+                overlays[(sy, sx)] = "S"
+
+        # Warps (authoritative doors/stairs/ladders for this map)
+        for warp in warps:
+            wy, wx = warp["y"], warp["x"]
+            if 0 <= wy < map_h_cells and 0 <= wx < map_w_cells:
+                overlays[(wy, wx)] = "D"
+
+        # Sprites (NPCs, items, objects) — higher priority than warps
+        # because an NPC standing on a warp should be drawn as the NPC
+        for sprite in npc_positions:
+            sy, sx = sprite["y"], sprite["x"]
+            if 0 <= sy < map_h_cells and 0 <= sx < map_w_cells:
+                stype = sprite["type"]
+                overlays[(sy, sx)] = {"item": "I", "object": "O"}.get(stype, "N")
+
+        # Player — highest priority, always drawn on top
+        if 0 <= player_y < map_h_cells and 0 <= player_x < map_w_cells:
+            overlays[(player_y, player_x)] = "P"
+
+        # ── 8. Build the FULL MAP grid ──────────────────────────────
+        # Classify every cell via get_collision_tile + classify_tile,
+        # then apply overlays.
         full_grid: List[List[str]] = []
         for my in range(map_h_cells):
             row_chars: List[str] = []
             for mx in range(map_w_cells):
-                tid = get_collision_tile(my, mx)
-                row_chars.append(classify_tile(tid))
+                ch = overlays.get((my, mx))
+                if ch is None:
+                    tid = get_collision_tile(my, mx)
+                    ch = classify_tile(tid)
+                row_chars.append(ch)
             full_grid.append(row_chars)
 
-        # Overlay sprites (NPCs / items / objects) on the full map
-        for sprite in npc_positions:
-            sy = sprite["y"]
-            sx = sprite["x"]
-            stype = sprite["type"]
-            if 0 <= sy < map_h_cells and 0 <= sx < map_w_cells:
-                if stype == "item":
-                    full_grid[sy][sx] = "I"
-                elif stype == "object":
-                    full_grid[sy][sx] = "O"
-                else:
-                    full_grid[sy][sx] = "N"
-
-        # Overlay the player marker
-        if 0 <= player_y < map_h_cells and 0 <= player_x < map_w_cells:
-            full_grid[player_y][player_x] = "P"
-
-        # ── 7. Build the 9×10 viewport (backward compat) ─────────────
-        # Camera-style window centered on the player. Same single-char
-        # categories as before, plus dialog overlay rows and the X
-        # marker for the rightmost border column (which the GB doesn't
-        # actually use for game state — it's the wraparound buffer).
-        npc_screen: dict[tuple[int, int], str] = {}
-        for sprite in npc_positions:
-            sy = sprite["y"] - player_y + PLAYER_SCREEN_ROW
-            sx = sprite["x"] - player_x + PLAYER_SCREEN_COL
-            if 0 <= sy < GAME_GRID_H and 0 <= sx < GAME_GRID_W:
-                npc_screen[(sy, sx)] = sprite["type"]
-
+        # ── 9. Build the 9×10 viewport (backward compat) ────────────
+        # Camera-style window centered on the player. Uses the same
+        # overlay + classifier pipeline as the full map, plus dialog
+        # overlay rows and the X marker for the rightmost border column.
         grid: List[List[str]] = []
         for vrow in range(GAME_GRID_H):
             row_chars = []
@@ -984,17 +1065,13 @@ class RedBlueMemoryReader(GameMemoryReader):
                 if vrow in dialog_rows:
                     row_chars.append("?")
                     continue
-                if vrow == PLAYER_SCREEN_ROW and vcol == PLAYER_SCREEN_COL:
-                    row_chars.append("P")
-                    continue
-                if (vrow, vcol) in npc_screen:
-                    stype = npc_screen[(vrow, vcol)]
-                    row_chars.append({"item": "I", "object": "O"}.get(stype, "N"))
-                    continue
                 abs_y = player_y + (vrow - PLAYER_SCREEN_ROW)
                 abs_x = player_x + (vcol - PLAYER_SCREEN_COL)
-                tid = get_collision_tile(abs_y, abs_x)
-                row_chars.append(classify_tile(tid))
+                ch = overlays.get((abs_y, abs_x))
+                if ch is None:
+                    tid = get_collision_tile(abs_y, abs_x)
+                    ch = classify_tile(tid)
+                row_chars.append(ch)
             grid.append(row_chars)
 
         return {
@@ -1011,6 +1088,8 @@ class RedBlueMemoryReader(GameMemoryReader):
             "grid": grid,                # 9x10 viewport (backward compat)
             "full_grid": full_grid,      # entire current map, [y][x]
             "sprites": npc_positions,
+            "warps": warps,              # authoritative warp coords + destinations
+            "signs": signs,              # authoritative sign coords + text IDs
         }
 
     def _read_sprite_positions(self) -> List[tuple]:
