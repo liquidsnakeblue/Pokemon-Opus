@@ -436,12 +436,20 @@ class ExploreAgent:
                 " the source of truth for walls/doors/positions. Use this"
                 " history only to stay coherent across turns and detect"
                 " when you are stuck — do NOT trust your past 'I see X'"
-                " claims if the current screenshot or tile map disagrees):"
+                " claims if the current screenshot or tile map disagrees."
+                " ENTRIES TAGGED [battle]/[dialog]/[menu] were NOT overworld"
+                " moves — you were inside a fight or a menu. They don't"
+                " mean you're 'stuck' in the overworld even if their"
+                " position is identical to your current position, because"
+                " position doesn't change while you're in a battle or a"
+                " dialog — the position shown is just where you entered"
+                " the battle/dialog from.):"
             )
             for entry in gs.action_history[-5:]:
                 pos_str = f"({entry.position[0]},{entry.position[1]})"
+                mode_tag = f"[{entry.mode}]"
                 parts.append(
-                    f"  T{entry.turn} @ {entry.map_name} {pos_str}: "
+                    f"  T{entry.turn} @ {entry.map_name} {pos_str} {mode_tag}: "
                     f"{entry.actions} → {entry.reasoning[:60]}"
                 )
 
