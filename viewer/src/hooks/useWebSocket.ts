@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { WSEvent, GameState } from '@/lib/types';
+import type { WSEvent, GameState, TileSnapshot } from '@/lib/types';
 
 export interface ReasoningEntry {
   turn: number;
@@ -12,6 +12,8 @@ interface UseWebSocketReturn {
   connected: boolean;
   viewers: number;
   gameState: GameState | null;
+  /** High-frequency tile snapshot, updated independently of agent turns. */
+  tiles: TileSnapshot | null;
   screenshot: string;
   reasoning: string;
   reasoningHistory: ReasoningEntry[];
@@ -27,6 +29,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
   const [viewers, setViewers] = useState(0);
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [tiles, setTiles] = useState<TileSnapshot | null>(null);
   const [screenshot, setScreenshot] = useState('');
   const [reasoning, setReasoning] = useState('');
   const [reasoningHistory, setReasoningHistory] = useState<ReasoningEntry[]>([]);
@@ -75,6 +78,18 @@ export function useWebSocket(): UseWebSocketReturn {
               return next.length > 50 ? next.slice(-50) : next;
             });
           }
+          break;
+
+        case 'tile_update':
+          setTiles({
+            tileGrid: data.tile_grid,
+            fullGrid: data.full_grid,
+            playerY: data.player_y,
+            playerX: data.player_x,
+            mapHeightCells: data.map_height_cells,
+            mapWidthCells: data.map_width_cells,
+            sprites: data.sprites,
+          });
           break;
 
         case 'reasoning_chunk':
@@ -143,5 +158,5 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, [connect]);
 
-  return { connected, viewers, gameState, screenshot, reasoning, reasoningHistory, events };
+  return { connected, viewers, gameState, tiles, screenshot, reasoning, reasoningHistory, events };
 }

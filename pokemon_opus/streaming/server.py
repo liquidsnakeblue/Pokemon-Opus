@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 STREAM_TARGET_FPS = 30
 STREAM_FRAME_INTERVAL = 1.0 / STREAM_TARGET_FPS
 
+# Tile-grid polling config — decoupled from agent turns so the map
+# updates in real time even while the agent is thinking.
+TILE_POLL_HZ = 5
+TILE_POLL_INTERVAL = 1.0 / TILE_POLL_HZ
+
 
 class StreamServer:
     """WebSocket broadcast server for the Pokemon-Opus viewer."""
@@ -42,6 +47,11 @@ class StreamServer:
         # Frame cache to avoid redundant emulator polls when multiple viewers connect
         self._frame_cache: bytes = b""
         self._frame_cache_time: float = 0.0
+
+        # Cached tile snapshot, updated by the background poll loop. Used
+        # to deliver tile data to newly-connected viewers immediately.
+        self._latest_tiles: Optional[Dict[str, Any]] = None
+        self._tile_poll_task: Optional[asyncio.Task] = None
 
         if enable_cors:
             self._app.add_middleware(
@@ -83,6 +93,19 @@ class StreamServer:
                         "reasoning": self._latest_state.get("last_reasoning", ""),
                         "deltas": {},
                     })
+                # Send cached tiles so the map appears immediately, even
+                # if the next poll/turn hasn't fired yet.
+                if self._latest_tiles:
+                    await ws.send_json({
+                        "type": "tile_update",
+                        "tile_grid": self._latest_tiles.get("grid", []),
+                        "full_grid": self._latest_tiles.get("full_grid", []),
+                        "player_y": self._latest_tiles.get("player_y", 0),
+                        "player_x": self._latest_tiles.get("player_x", 0),
+                        "map_height_cells": self._latest_tiles.get("map_height_cells", 0),
+                        "map_width_cells": self._latest_tiles.get("map_width_cells", 0),
+                        "sprites": self._latest_tiles.get("sprites", []),
+                    })
                 # Keep alive — client doesn't send data, just receives
                 while True:
                     try:
@@ -114,6 +137,47 @@ class StreamServer:
                 self._generate_frames(),
                 media_type="multipart/x-mixed-replace; boundary=frame",
             )
+
+    # ── Tile Polling ─────────────────────────────────────────────────
+    # The map data updates in real time, independent of agent turns.
+    # We poll the emulator's /tiles endpoint at TILE_POLL_HZ and
+    # broadcast a `tile_update` event each time. The viewer's MapView
+    # subscribes to these so the on-screen map matches the live game
+    # even while the LLM is deciding the next move.
+
+    async def _tile_poll_loop(self) -> None:
+        """Poll the emulator for tile data and broadcast updates forever."""
+        if self._game_client is None:
+            logger.warning("StreamServer: no game_client; tile poll loop will idle")
+            return
+        logger.info(f"StreamServer: starting tile poll loop at {TILE_POLL_HZ} Hz")
+        consecutive_errors = 0
+        while True:
+            loop_start = time.monotonic()
+            try:
+                tiles = await self._game_client.get_tiles()
+                self._latest_tiles = tiles
+                # Broadcast a compact tile_update with everything the
+                # viewer needs to render the map. Keep the payload lean —
+                # this fires 5x/second.
+                await self.broadcast("tile_update", {
+                    "tile_grid": tiles.get("grid", []),
+                    "full_grid": tiles.get("full_grid", []),
+                    "player_y": tiles.get("player_y", 0),
+                    "player_x": tiles.get("player_x", 0),
+                    "map_height_cells": tiles.get("map_height_cells", 0),
+                    "map_width_cells": tiles.get("map_width_cells", 0),
+                    "sprites": tiles.get("sprites", []),
+                })
+                consecutive_errors = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                consecutive_errors += 1
+                if consecutive_errors <= 3 or consecutive_errors % 50 == 0:
+                    logger.debug(f"tile poll error #{consecutive_errors}: {e}")
+            elapsed = time.monotonic() - loop_start
+            await asyncio.sleep(max(0.0, TILE_POLL_INTERVAL - elapsed))
 
     # ── Frame Streaming ──────────────────────────────────────────────
 
@@ -269,6 +333,13 @@ class StreamServer:
         """Start the uvicorn server (call from async context)."""
         import uvicorn
 
+        # Kick off the background tile poller so the map stays in sync
+        # with the live game independent of agent turn cadence.
+        if self._game_client is not None and self._tile_poll_task is None:
+            self._tile_poll_task = asyncio.create_task(
+                self._tile_poll_loop(), name="tile-poll-loop"
+            )
+
         config = uvicorn.Config(
             app=self._app,
             host=self.host,
@@ -276,4 +347,13 @@ class StreamServer:
             log_level="warning",
         )
         server = uvicorn.Server(config)
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            if self._tile_poll_task is not None:
+                self._tile_poll_task.cancel()
+                try:
+                    await self._tile_poll_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._tile_poll_task = None

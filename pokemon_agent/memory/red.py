@@ -86,9 +86,17 @@ ADDR_MAP_DATA_PTR  = 0xD36A   # 2 bytes: pointer to map block data
 ADDR_MAP_TILESET   = 0xD367   # current tileset ID
 ADDR_MAP_CONNECT   = 0xD370   # connection byte (N/S/E/W bits)
 ADDR_TILE_BUFFER   = 0xC3A0   # on-screen tile buffer (20x18 = 360 bytes)
-ADDR_TILESET_COLL  = 0xD530   # 2 bytes: pointer to tileset collision data
+ADDR_OVERWORLD_MAP = 0xC6E8   # wOverworldMap — full block grid for current map
+                              # size = (map_w + 6) * (map_h + 6) bytes,
+                              # 3-block border padding on every side
+ADDR_TILESET_BANK  = 0xD52B   # ROM bank that holds the current tileset's blocks
+ADDR_TILESET_BLOCKS = 0xD52C  # 2 bytes: pointer to tileset block defs
+                              # (each block = 16 bytes = 4x4 of 8x8 tiles)
+ADDR_TILESET_COLL  = 0xD530   # 2 bytes: pointer to tileset collision (walkable) list
 ADDR_GRASS_TILE    = 0xD535   # tile ID for grass in current tileset
 ADDR_TILESET_TYPE  = 0xFFD7   # 0=indoor, 1=cave, 2=outdoor
+
+OVERWORLD_BORDER   = 3        # wOverworldMap has 3-block border padding
 
 # Tile buffer is 20 columns x 18 rows = 360 tiles
 # Represents the visible screen area (each tile is 8x8 pixels → 160x144)
@@ -736,20 +744,62 @@ class RedBlueMemoryReader(GameMemoryReader):
             "map_name": MAP_NAMES.get(map_id, f"Unknown Map ({map_id})"),
         }
 
-    def read_tiles(self) -> Dict[str, Any]:
-        """Read the on-screen tile buffer, map dimensions, collision data, and classify tiles.
+    # Tileset-specific tile-ID → visual-category overrides for the
+    # classified grid. Used by both the viewport and the full-map output.
+    # Tileset 0 = Overworld (Pallet Town, routes), Tileset 5 = Indoor.
+    _TILE_OVERRIDES = {
+        # Tileset 0: Overworld
+        0: {
+            85: "F", 86: "F", 87: "F",                       # flowers
+            14: "f", 15: "f", 31: "f",                       # fences
+            83: "B", 18: "B", 56: "B",                       # building roof
+            10: "B", 75: "B", 23: "B", 24: "B", 25: "B", 26: "B",  # building walls
+            11: "D", 12: "D", 27: "D", 28: "D",              # doors
+            70: "S", 71: "S",                                 # signs
+             3: "T",  5: "T",  6: "T",  8: "T",  9: "T",     # trees
+            20: "W",                                          # water
+            54: "L", 55: "L",                                 # ledges
+            82: "~",                                          # tall grass
+        },
+        # Tileset 5: Indoor (lab, houses) — populated as we learn
+        5: {},
+    }
 
-        Returns a dict with:
-          - map_height/map_width: in 2x2 blocks
-          - tileset: current tileset ID
-          - tileset_type: 0=indoor, 1=cave, 2=outdoor
-          - grass_tile: tile ID for grass
-          - player_y/player_x: player position on map
-          - tiles: 20x18 grid of tile IDs (the raw screen buffer)
-          - collision: list of walkable tile IDs for the current tileset
-          - grid: 20x18 grid of classified tile types:
-              "." = walkable, "#" = wall, "~" = grass, "W" = water,
-              "P" = player, "N" = NPC, "D" = warp/door
+    def read_tiles(self) -> Dict[str, Any]:
+        """Read the current map via wOverworldMap and produce a classified grid.
+
+        This is the source-of-truth tile reader. It does NOT look at the
+        on-screen rendered buffer (which contains border padding, dialog
+        overlays, and sprite-layer artifacts). Instead it reads:
+
+          - wOverworldMap (0xC6E8): an array of block IDs for the entire
+            current map, with 3-block border padding on every side.
+          - wTilesetBlocksPtr (0xD52C) + wTilesetBank (0xD52B): a pointer
+            into ROM where each block's 4×4 grid of 8×8 tile IDs lives.
+          - wTilesetCollisionPtr (0xD530): the walkable tile-ID list,
+            0xFF terminated.
+
+        For each game cell at absolute map coords (map_y, map_x):
+          1. Compute block coords (block_y, block_x) = (map_y//2, map_x//2)
+          2. Look up the block_id in wOverworldMap (with border offset)
+          3. Find the 8×8 tile under the player's feet within that block
+             (bottom-left of the cell's 2×2 sub-region)
+          4. Check if that tile_id is in the walkable set
+
+        Returns:
+          map_height/map_width  — in 2×2 blocks (RAM units)
+          tileset / tileset_type
+          grass_tile
+          player_y / player_x   — absolute game-cell coordinates
+          walkable_tiles        — sorted list of walkable 8×8 tile IDs
+          grid                  — 9×10 viewport centered on the player,
+                                  classified to single-char categories
+                                  (P/N/I/O/./#/~/D/...)  [backward compat]
+          full_grid             — the ENTIRE current map as a classified
+                                  2D list, indexed [map_y][map_x]. NEW —
+                                  the agent should prefer this over `grid`.
+          full_grid_height/full_grid_width — full map dimensions in cells
+          sprites               — NPC list with map coords + types
         """
         map_h = self.emu.read_u8(ADDR_MAP_HEIGHT)
         map_w = self.emu.read_u8(ADDR_MAP_WIDTH)
@@ -759,51 +809,15 @@ class RedBlueMemoryReader(GameMemoryReader):
         player_y = self.emu.read_u8(ADDR_MAP_Y)
         player_x = self.emu.read_u8(ADDR_MAP_X)
 
-        # Read the on-screen tile buffer (20x18 = 360 bytes at 8x8 pixel resolution)
-        raw_tiles = self.emu.read_range(ADDR_TILE_BUFFER, TILE_BUFFER_SIZE)
-        tiles_8x8 = []
-        for row in range(TILE_BUFFER_H):
-            row_data = []
-            for col in range(TILE_BUFFER_W):
-                row_data.append(raw_tiles[row * TILE_BUFFER_W + col])
-            tiles_8x8.append(row_data)
+        # Game-cell extent of the actual map (each block = 2x2 cells)
+        map_h_cells = map_h * 2
+        map_w_cells = map_w * 2
 
-        # Downsample to 16x16 game grid (10x9).
-        # The game uses 2x2 blocks of 8x8 tiles for each movement cell.
-        # Take the top-left tile of each 2x2 block as representative.
-        GAME_GRID_W = TILE_BUFFER_W // 2   # 10
-        GAME_GRID_H = TILE_BUFFER_H // 2   # 9
-        tiles_2d = []
-        for row in range(GAME_GRID_H):
-            row_data = []
-            for col in range(GAME_GRID_W):
-                # Sample BOTTOM-LEFT of each 2x2 block — this is where the
-                # player's feet are in Pokemon Red's collision check
-                row_data.append(tiles_8x8[row * 2 + 1][col * 2])
-            tiles_2d.append(row_data)
-
-        # Determine walkable tiles.
-        #
-        # The collision data pointer at D530 is a banked ROM pointer that
-        # can't be read via the linear address space. Instead we use the
-        # wTilesetCollisionPtr which the game engine copies to WRAM, and
-        # supplement with the tile the player is standing on.
-        #
-        # The on-screen buffer is 20x18 but includes 2 border columns on
-        # the right (tiles 18-19) and 2 border rows top/bottom that are
-        # outside the actual map. We exclude border tiles from walkability.
-        #
-        # Strategy: read the collision table from WRAM if available, then
-        # always include the player's tile. Border tiles (columns 18-19,
-        # and any tile that ONLY appears in border positions) are excluded.
-
-        player_tile = tiles_2d[8][9]  # player is at row 8, col 9
-        walkable_tiles = set()
-
-        # Try reading collision data from the WRAM copy at the pointer
+        # ── 1. Walkable tile list ─────────────────────────────────────
+        # wTilesetCollisionPtr points into WRAM (or sometimes ROM); the
+        # data is a flat array of walkable 8×8 tile IDs terminated by 0xFF.
+        walkable_tiles: set[int] = set()
         coll_ptr = self.emu.read_u16(ADDR_TILESET_COLL)
-        # The game engine may copy collision data to WRAM in some cases.
-        # Try reading regardless — if it's in addressable range, it works.
         try:
             for i in range(256):
                 tile_id = self.emu.read_u8(coll_ptr + i)
@@ -813,153 +827,189 @@ class RedBlueMemoryReader(GameMemoryReader):
         except Exception:
             pass
 
-        # Always include the player's tile
-        walkable_tiles.add(player_tile)
+        # ── 2. wOverworldMap — full block grid for this map ──────────
+        # Layout: (map_h + 6) rows by (map_w + 6) cols of block IDs.
+        # The 3-block border padding wraps the actual map on every side
+        # so the game's rendering can scroll past the edges without
+        # bounds-checking.
+        buf_w = map_w + OVERWORLD_BORDER * 2
+        buf_h = map_h + OVERWORLD_BORDER * 2
+        ow_size = buf_w * buf_h
+        try:
+            ow_data = self.emu.read_range(ADDR_OVERWORLD_MAP, ow_size)
+        except Exception:
+            ow_data = b""
 
-        # Identify border tiles from the raw 8x8 buffer (columns 18-19)
-        from collections import Counter
-        inner_counts = Counter()
-        border_counts = Counter()
-        for row in range(TILE_BUFFER_H):
-            for col in range(TILE_BUFFER_W):
-                t = tiles_8x8[row][col]
-                if col >= 18:
-                    border_counts[t] += 1
+        # ── 3. Tileset block definitions ─────────────────────────────
+        # wTilesetBlocksPtr is a 16-bit address into ROM bank wTilesetBank.
+        # We do an explicit bank-aware read so we don't depend on whichever
+        # bank happens to be currently mapped at 0x4000-0x7FFF.
+        blocks_ptr = self.emu.read_u16(ADDR_TILESET_BLOCKS)
+        blocks_bank = self.emu.read_u8(ADDR_TILESET_BANK)
+
+        # Cache: block_id (0-255) → tuple of 16 8×8 tile IDs
+        # Only fetch the blocks actually referenced by this map.
+        block_cache: dict[int, tuple] = {}
+        referenced_block_ids = set(ow_data) if ow_data else set()
+        for bid in referenced_block_ids:
+            block_addr = blocks_ptr + bid * 16
+            try:
+                # If blocks_ptr is in the linear addressable range (i.e.,
+                # 0x0000-0x7FFF), use the bank-aware read. Pokemon Red's
+                # tileset blocks live in the 0x4000-0x7FFF banked range.
+                if 0x4000 <= block_addr < 0x8000:
+                    raw = self.emu.read_bank_range(blocks_bank, block_addr, 16)
                 else:
-                    inner_counts[t] += 1
-        # Remove tiles that only appear in border columns
-        for t in list(walkable_tiles):
-            if t in border_counts and t not in inner_counts:
-                walkable_tiles.discard(t)
+                    raw = self.emu.read_range(block_addr, 16)
+                block_cache[bid] = tuple(raw)
+            except Exception:
+                block_cache[bid] = tuple([0] * 16)
 
-        # Read NPC/sprite positions
+        def get_collision_tile(map_y: int, map_x: int) -> int:
+            """Return the 8×8 tile ID under the player's feet at the given
+            game-cell coordinate, or -1 if the cell is off-map."""
+            if map_y < 0 or map_x < 0 or map_y >= map_h_cells or map_x >= map_w_cells:
+                return -1
+
+            block_y = map_y // 2
+            block_x = map_x // 2
+            sub_y = map_y & 1   # 0 = top half of block, 1 = bottom half
+            sub_x = map_x & 1   # 0 = left half, 1 = right half
+
+            ow_y = block_y + OVERWORLD_BORDER
+            ow_x = block_x + OVERWORLD_BORDER
+            ow_offset = ow_y * buf_w + ow_x
+            if ow_offset < 0 or ow_offset >= len(ow_data):
+                return -1
+            block_id = ow_data[ow_offset]
+
+            # Within a 4×4 block of 8×8 tiles, the player's feet sit on
+            # the bottom-left tile of the cell's 2×2 sub-region.
+            tile_row = sub_y * 2 + 1
+            tile_col = sub_x * 2
+            tile_offset = tile_row * 4 + tile_col
+            block = block_cache.get(block_id)
+            if block is None:
+                return -1
+            return block[tile_offset]
+
+        # ── 4. Sprites ───────────────────────────────────────────────
         npc_positions = self._read_sprite_positions()
 
-        # Build classified grid on the 10x9 game grid
-        # Player is at the center of the 10x9 grid: row 4, col 4
-        player_screen_row = 4
-        player_screen_col = 4
-        npc_screen = {}  # (row, col) -> sprite type
-        for sprite in npc_positions:
-            ny, nx = sprite["y"], sprite["x"]
-            stype = sprite["type"]
-            # Convert map coords to screen-relative on the game grid
-            sy = ny - player_y + player_screen_row
-            sx = nx - player_x + player_screen_col
-            if 0 <= sy < GAME_GRID_H and 0 <= sx < GAME_GRID_W:
-                npc_screen[(sy, sx)] = stype
-
-        # Detect dialog box rows — the dialog box uses tile 122 (border)
-        # and 124 (left edge) extensively. When a row starts with 121/124/125
-        # and is mostly tile 122/127, it's a dialog overlay, not the map.
-        # Detect dialog box region.
-        # When a dialog box is open, it occupies a contiguous block of rows
-        # at the bottom of the screen. The first and last rows of the dialog
-        # use border tiles (121 = top-left, 122 = horizontal border,
-        # 124 = left edge, 125 = bottom-left). We find the topmost row
-        # that starts with a dialog border tile and mark everything from
-        # there down as dialog.
-        # Detect dialog on the raw 8x8 buffer, then map to game grid rows
+        # ── 5. Dialog detection ─────────────────────────────────────
+        # Dialog is a screen-layer concern (it overlays the rendered tile
+        # buffer regardless of map state), so we still read the screen
+        # buffer for this. We only need the leftmost column of each row.
+        try:
+            raw_tiles = self.emu.read_range(ADDR_TILE_BUFFER, TILE_BUFFER_SIZE)
+        except Exception:
+            raw_tiles = b"\x00" * TILE_BUFFER_SIZE
         DIALOG_FIRST_COL_TILES = {121, 124, 125}
-
-        dialog_start_8x8 = TILE_BUFFER_H  # no dialog by default
-        for row in range(TILE_BUFFER_H):
-            first_tile = tiles_8x8[row][0]
+        dialog_start_8x8 = TILE_BUFFER_H
+        for row_idx in range(TILE_BUFFER_H):
+            first_tile = raw_tiles[row_idx * TILE_BUFFER_W] if row_idx * TILE_BUFFER_W < len(raw_tiles) else 0
             if first_tile in DIALOG_FIRST_COL_TILES:
-                dialog_start_8x8 = row
+                dialog_start_8x8 = row_idx
                 break
 
-        # Convert to game grid row (divide by 2)
+        GAME_GRID_W = 10
+        GAME_GRID_H = 9
+        PLAYER_SCREEN_ROW = 4
+        PLAYER_SCREEN_COL = 4
+
         dialog_start_game = dialog_start_8x8 // 2
         dialog_rows = set(range(dialog_start_game, GAME_GRID_H))
 
-        # Classify tiles into visual categories.
-        # Non-walkable tiles need subcategories so the viewer can render them
-        # differently (building vs fence vs flower vs ledge vs water etc.)
-        #
-        # We identify tile types by their tileset + tile ID.
-        # Tileset 0 = Overworld (Pallet Town, routes, etc.)
-        # Tileset 5 = Indoor (Oak's Lab, houses)
-        # This mapping will grow as we encounter more tilesets.
+        overrides = self._TILE_OVERRIDES.get(tileset_id, {})
 
-        # Known tile classifications per tileset
-        # Format: tile_id -> category character
-        TILE_OVERRIDES = {
-            # Tileset 0: Overworld
-            0: {
-                # Flowers / decorative ground
-                85: "F", 86: "F", 87: "F",
-                # Fences / borders
-                14: "f", 15: "f", 31: "f",
-                # Building roof
-                83: "B", 18: "B", 56: "B",
-                # Building walls / front
-                10: "B", 75: "B", 23: "B", 24: "B", 25: "B", 26: "B",
-                # Building special (doors area)
-                11: "D", 12: "D", 27: "D", 28: "D",
-                # Signs / mailbox
-                70: "S", 71: "S",
-                # Trees
-                 3: "T",  5: "T",  6: "T",  8: "T",  9: "T",
-                # Water
-                20: "W",
-                # Ledges
-                54: "L", 55: "L",
-                # Tall grass
-                82: "~",
-            },
-            # Tileset 5: Indoor (lab, houses)
-            5: {
-                # The indoor tileset uses different tile IDs
-                # These will be mapped as we observe them
-            },
-        }
+        def classify_tile(tile_id: int) -> str:
+            """Convert an 8×8 tile ID into its terrain category char."""
+            if tile_id < 0:
+                return "#"  # off-map → wall
+            if tile_id in overrides:
+                return overrides[tile_id]
+            if tile_id == grass_tile and grass_tile != 0xFF:
+                return "~"
+            if tile_id in walkable_tiles:
+                return "."
+            return "#"
 
-        overrides = TILE_OVERRIDES.get(tileset_id, {})
+        # ── 6. Build the FULL MAP grid ───────────────────────────────
+        # The entire current map as a classified 2D array, indexed
+        # [map_y][map_x] in absolute game-cell coordinates.
+        full_grid: List[List[str]] = []
+        for my in range(map_h_cells):
+            row_chars: List[str] = []
+            for mx in range(map_w_cells):
+                tid = get_collision_tile(my, mx)
+                row_chars.append(classify_tile(tid))
+            full_grid.append(row_chars)
 
-        grid = []
-        for row in range(GAME_GRID_H):
-            row_classes = []
-            for col in range(GAME_GRID_W):
-                tile_id = tiles_2d[row][col]
-                # Last column is border (maps to 8x8 cols 18-19)
-                if col >= GAME_GRID_W - 1:
-                    row_classes.append("X")
-                # Dialog overlay rows
-                elif row in dialog_rows:
-                    row_classes.append("?")
-                elif row == player_screen_row and col == player_screen_col:
-                    row_classes.append("P")
-                elif (row, col) in npc_screen:
-                    stype = npc_screen[(row, col)]
-                    if stype == "item":
-                        row_classes.append("I")  # Item
-                    elif stype == "object":
-                        row_classes.append("O")  # Object/decoration
-                    else:
-                        row_classes.append("N")  # NPC (person)
-                # Check tileset-specific overrides first
-                elif tile_id in overrides:
-                    row_classes.append(overrides[tile_id])
-                elif tile_id == grass_tile and grass_tile != 0xFF:
-                    row_classes.append("~")
-                elif tile_id in walkable_tiles:
-                    row_classes.append(".")
+        # Overlay sprites (NPCs / items / objects) on the full map
+        for sprite in npc_positions:
+            sy = sprite["y"]
+            sx = sprite["x"]
+            stype = sprite["type"]
+            if 0 <= sy < map_h_cells and 0 <= sx < map_w_cells:
+                if stype == "item":
+                    full_grid[sy][sx] = "I"
+                elif stype == "object":
+                    full_grid[sy][sx] = "O"
                 else:
-                    row_classes.append("#")
-            grid.append(row_classes)
+                    full_grid[sy][sx] = "N"
+
+        # Overlay the player marker
+        if 0 <= player_y < map_h_cells and 0 <= player_x < map_w_cells:
+            full_grid[player_y][player_x] = "P"
+
+        # ── 7. Build the 9×10 viewport (backward compat) ─────────────
+        # Camera-style window centered on the player. Same single-char
+        # categories as before, plus dialog overlay rows and the X
+        # marker for the rightmost border column (which the GB doesn't
+        # actually use for game state — it's the wraparound buffer).
+        npc_screen: dict[tuple[int, int], str] = {}
+        for sprite in npc_positions:
+            sy = sprite["y"] - player_y + PLAYER_SCREEN_ROW
+            sx = sprite["x"] - player_x + PLAYER_SCREEN_COL
+            if 0 <= sy < GAME_GRID_H and 0 <= sx < GAME_GRID_W:
+                npc_screen[(sy, sx)] = sprite["type"]
+
+        grid: List[List[str]] = []
+        for vrow in range(GAME_GRID_H):
+            row_chars = []
+            for vcol in range(GAME_GRID_W):
+                if vcol >= GAME_GRID_W - 1:
+                    row_chars.append("X")
+                    continue
+                if vrow in dialog_rows:
+                    row_chars.append("?")
+                    continue
+                if vrow == PLAYER_SCREEN_ROW and vcol == PLAYER_SCREEN_COL:
+                    row_chars.append("P")
+                    continue
+                if (vrow, vcol) in npc_screen:
+                    stype = npc_screen[(vrow, vcol)]
+                    row_chars.append({"item": "I", "object": "O"}.get(stype, "N"))
+                    continue
+                abs_y = player_y + (vrow - PLAYER_SCREEN_ROW)
+                abs_x = player_x + (vcol - PLAYER_SCREEN_COL)
+                tid = get_collision_tile(abs_y, abs_x)
+                row_chars.append(classify_tile(tid))
+            grid.append(row_chars)
 
         return {
             "map_height": map_h,
             "map_width": map_w,
+            "map_height_cells": map_h_cells,
+            "map_width_cells": map_w_cells,
             "tileset": tileset_id,
             "tileset_type": tileset_type,
             "grass_tile": grass_tile,
             "player_y": player_y,
             "player_x": player_x,
-            "tiles": tiles_2d,
             "walkable_tiles": sorted(walkable_tiles),
-            "grid": grid,
+            "grid": grid,                # 9x10 viewport (backward compat)
+            "full_grid": full_grid,      # entire current map, [y][x]
             "sprites": npc_positions,
         }
 

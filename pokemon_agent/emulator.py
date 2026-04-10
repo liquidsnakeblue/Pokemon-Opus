@@ -92,6 +92,20 @@ class Emulator(ABC):
     def read_range(self, addr: int, size: int) -> bytes:
         """Read *size* bytes starting at *addr*."""
 
+    def read_bank_u8(self, bank: int, addr: int) -> int:
+        """Read a byte from a specific ROM bank.
+
+        Default implementation falls back to the linear address space —
+        backends that don't expose explicit bank reads will see whatever
+        is currently mapped at *addr*. PyBoyEmulator overrides this with
+        a true bank-aware read.
+        """
+        return self.read_u8(addr)
+
+    def read_bank_range(self, bank: int, addr: int, size: int) -> bytes:
+        """Read *size* bytes from a specific ROM bank starting at *addr*."""
+        return self.read_range(addr, size)
+
     # -- save / load --------------------------------------------------------
 
     @abstractmethod
@@ -211,6 +225,20 @@ class PyBoyEmulator(Emulator):
 
     def read_range(self, addr: int, size: int) -> bytes:
         return bytes(self._pyboy.memory[addr : addr + size])  # type: ignore[index]
+
+    def read_bank_u8(self, bank: int, addr: int) -> int:
+        """Read a single byte from a specific ROM bank, regardless of which
+        bank is currently mapped at the CPU's view of memory.
+
+        Required for tileset block lookups in Pokemon Red — block
+        definitions live in switchable banks (typically bank 4 for the
+        overworld tileset) and we need them on demand from any context.
+        """
+        return self._pyboy.memory[bank, addr] & 0xFF  # type: ignore[index]
+
+    def read_bank_range(self, bank: int, addr: int, size: int) -> bytes:
+        """Read `size` bytes from a specific ROM bank starting at `addr`."""
+        return bytes(self._pyboy.memory[bank, addr : addr + size])  # type: ignore[index]
 
     # -- save / load --------------------------------------------------------
 

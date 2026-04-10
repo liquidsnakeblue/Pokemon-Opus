@@ -152,9 +152,32 @@ export type WSEvent =
   | { type: 'objective_update'; objectives: Objective[] }
   | { type: 'memory_created'; location: string; category: string; text: string }
   | { type: 'map_update'; map_id: number; position: [number, number]; connections: unknown[] }
+  | {
+      // Real-time map snapshot pushed at ~5 Hz, decoupled from agent turns.
+      type: 'tile_update';
+      tile_grid: string[][];
+      full_grid: string[][];
+      player_y: number;
+      player_x: number;
+      map_height_cells: number;
+      map_width_cells: number;
+      sprites: Array<{ y: number; x: number; type: string; picture_id?: number }>;
+    }
   | { type: 'episode_start'; episode_id: string }
   | { type: 'episode_end'; badges: number; pokedex: number; turns: number }
   | { type: 'error'; message: string };
+
+/** Live tile snapshot, kept separate from gameState so it can update at
+ *  high frequency without re-rendering everything. */
+export interface TileSnapshot {
+  tileGrid: string[][];
+  fullGrid: string[][];
+  playerY: number;
+  playerX: number;
+  mapHeightCells: number;
+  mapWidthCells: number;
+  sprites: Array<{ y: number; x: number; type: string }>;
+}
 
 // Badge names and colors
 export const BADGES = [

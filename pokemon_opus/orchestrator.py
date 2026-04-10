@@ -62,6 +62,12 @@ class Orchestrator:
         self._consecutive_errors: int = 0
         self._max_consecutive_errors: int = 5
 
+        # Tracks whether we've seen the game leave the title/intro state.
+        # The first turn play_time is non-zero we wipe the accumulator
+        # to discard any garbage that was observed during the intro before
+        # the game-started gate was in place (e.g. older episode data).
+        self._game_started_seen: bool = False
+
     # ── Agent Access ───────────────────────────────────────────────────
 
     @property
@@ -189,11 +195,32 @@ class Orchestrator:
         # Phase 2b: Read tile grid and feed into the accumulator.
         # This runs before the agent decides, so the agent can query
         # self.grid for pathfinding in the current map.
+        #
+        # IMPORTANT: do NOT feed the accumulator while we're still on the
+        # title screen / Oak's speech / naming sequence. During those
+        # screens the player position and map_id RAM fields hold default
+        # values ("Red's House 2F", random coords) and read_tiles is
+        # reading title-screen graphics — observing all of that would
+        # pollute the real map's grid with garbage. We use play_time as
+        # the gate: it stays at "0:00:00" until the game actually begins
+        # (the first frame the player has control after waking up in
+        # bed), then ticks up forever after.
         tile_data: Optional[Dict[str, Any]] = None
         try:
             tile_data = await self.game.get_tiles()
             tgrid = tile_data.get("grid", [])
-            if tgrid:
+            game_started = self.gs.play_time and self.gs.play_time != "0:00:00"
+            if tgrid and game_started:
+                # First post-intro observation: discard any stale data
+                # that was accumulated under RAM-default coords/map_id.
+                if not self._game_started_seen:
+                    self._game_started_seen = True
+                    if self.grid.maps:
+                        logger.info(
+                            f"Game started — clearing {len(self.grid.maps)} stale "
+                            f"intro-era map(s) from accumulator"
+                        )
+                        self.grid.maps.clear()
                 self.grid.observe(
                     map_id=self.gs.map_id,
                     map_name=self.gs.map_name,

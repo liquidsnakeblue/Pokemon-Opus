@@ -10,7 +10,7 @@ import { MilestonesPanel } from '@/components/MilestonesPanel';
 import { MapView } from '@/components/MapView';
 
 export default function App() {
-  const { connected, viewers, gameState, screenshot, reasoning, reasoningHistory, events } =
+  const { connected, viewers, gameState, tiles, screenshot, reasoning, reasoningHistory, events } =
     useWebSocket();
 
   return (
@@ -36,9 +36,13 @@ export default function App() {
         <div className="flex flex-col gap-2 w-[460px] shrink-0 min-h-0">
           <GameScreen mode={gameState?.mode ?? 'explore'} />
           <MapView
-            tileGrid={gameState?.tile_grid}
+            tileGrid={tiles?.tileGrid ?? gameState?.tile_grid}
             mapName={gameState?.player.map_name}
-            position={gameState?.player.position}
+            position={
+              tiles
+                ? [tiles.playerY, tiles.playerX]
+                : gameState?.player.position
+            }
           />
           <TeamPanel party={gameState?.party ?? []} />
         </div>
