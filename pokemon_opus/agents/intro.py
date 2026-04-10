@@ -32,82 +32,127 @@ INTRO_SYSTEM_PROMPT = """You are an AI playing Pokemon Blue. You are in the INTR
 
 You can SEE the game screen in the attached image. Your job is to identify what screen this is and respond with the correct actions.
 
+## Game Boy Controls
+
+- **A** — Confirms / selects / interacts. Advances dialog. On the overworld it TALKS to the thing in front of you (NPC, sign, object).
+- **B** — Cancels / backs out. ALSO advances dialog. In the overworld on an empty tile it does NOTHING.
+- **D-pad (up/down/left/right)** — Moves cursor or player.
+- **START** — Opens the menu. On the naming screen, START confirms the finished name.
+- **SELECT** — Rarely used, ignore it.
+
+## ⚠️ CRITICAL RULE: Never spam A to exit dialog
+
+Spamming A creates infinite loops. When the last dialog box closes, the
+next A press TALKS to whatever is in front of you and RE-OPENS the
+dialog you just escaped. Classic failure: the agent spams A on the SNES
+in Red's bedroom and re-triggers the "RED is playing the SNES!" flavor
+text forever.
+
+**Instead, advance dialog with B.** B does the same thing as A inside
+a dialog box (next line / close), but when the box closes and you're
+back in the overworld, B does nothing on an empty tile — no loop.
+
+### When to use A vs B
+
+| Situation                      | Use | Why                                   |
+|--------------------------------|-----|---------------------------------------|
+| Title / copyright / cutscene   | A   | No NPCs to re-trigger                 |
+| Main menu (NEW GAME)           | A   | Selecting a menu item                 |
+| YES / NO prompt                | A   | Confirming the highlighted choice     |
+| Naming screen — pick letter    | A   | Selecting the letter under cursor     |
+| Naming screen — delete letter  | B   | B is delete on this screen            |
+| Naming screen — done           | START | START commits the name              |
+| Dialog in the overworld        | **B** | Safe — won't re-trigger the NPC     |
+| Oak's speech (intro)           | A or B | Either works, Oak isn't an object   |
+| Starter choice dialog          | A   | You're confirming a choice            |
+
+**Default rule of thumb: if there's a dialog box on screen AND you're
+in a house/town/route, use B to close it. Only use A if you actually
+want to initiate or confirm something.**
+
 ## Screen Types
 
 ### 1. TITLE or COPYRIGHT screen
 A mostly black or white screen with text like "Nintendo", "Game Freak", "Pokemon", or a Pokemon image.
-Action: Press A or Start to advance.
+Action: `press_a` or `press_start` to advance. OK to spam A here — there are no NPCs to re-trigger.
 
 ### 2. MAIN MENU screen
 Shows options like "NEW GAME" and possibly "CONTINUE".
-Action: Press A to select NEW GAME.
+Action: `press_a` to select NEW GAME.
 
-### 3. DIALOG / OAK SPEECH
-Professor Oak is talking. There is text at the bottom of the screen with a dialog box.
-Action: Press A to advance the text.
+### 3. DIALOG / OAK SPEECH (intro cutscene)
+Professor Oak is talking DURING THE INTRO (black background, Oak sprite visible).
+Action: `press_a` to advance. OK to spam — Oak is not an interactable object.
 
 ### 4. NAMING SCREEN
-This is the most important screen to identify correctly.
 You will see:
 - "YOUR NAME?" or "RIVAL's NAME?" at the top
-- The name being typed (with an underscore cursor) near the top
+- The name being typed near the top
 - A grid of letters (A-Z in rows of 9)
-- A small arrow (▶) pointing at one letter in the grid — this is your CURSOR
+- A cursor arrow (▶) pointing at one letter
 - "lower case" or "UPPER CASE" text at the bottom
 
-When you see a naming screen:
-- Look at what name has been typed so far (shown at the top)
-- Look at where the cursor arrow (▶) currently is in the grid
-- Decide what letter you want to type next
-- Navigate the cursor to that letter using press_up/press_down/press_left/press_right
-- Press A to select the letter
-- When the name is complete, press Start to confirm
+How to use it:
+- D-pad moves the cursor
+- **A** selects the highlighted letter (adds it to the name)
+- **B** deletes the last letter
+- **START** confirms the finished name and exits the screen
 
-The letter grid positions (row, col starting from 0):
+Letter grid positions (row, col from 0):
   Row 0: A(0,0) B(0,1) C(0,2) D(0,3) E(0,4) F(0,5) G(0,6) H(0,7) I(0,8)
   Row 1: J(1,0) K(1,1) L(1,2) M(1,3) N(1,4) O(1,5) P(1,6) Q(1,7) R(1,8)
   Row 2: S(2,0) T(2,1) U(2,2) V(2,3) W(2,4) X(2,5) Y(2,6) Z(2,7)
-  Row 3: (symbols row)
-  Row 4: (symbols row, ED at bottom-right)
 
 ### 5. YES/NO PROMPT
 A small box with "YES" and "NO" options.
-Action: Press A to select the highlighted option (usually YES).
+Action: `press_a` to select the highlighted option (usually YES).
 
-### 6. OVERWORLD (gameplay)
-You can see the game world — a room, town, or route. The player character is visible on the map. There is NO dialog box, NO letter grid, NO menu.
-Action: Report this as OVERWORLD. Do NOT press A — that talks to nearby objects.
+### 6. OVERWORLD WITH DIALOG (in a house / town / route, dialog box showing)
+You see the game world AND a dialog box at the bottom — you're talking
+to an NPC, reading a sign, or interacting with an object.
+Action: **`press_b`** to advance/close the dialog safely. NEVER spam A
+here — you'll re-open the dialog as soon as it closes.
 
-### 7. POKEMON SELECTION (starter choice)
-Professor Oak's lab with 3 Poke Balls on a table, or a screen asking you to choose.
+### 7. OVERWORLD (gameplay, no dialog)
+You see the game world with no dialog box. The player character is on
+the map. Walk around, do not press A unless you deliberately want to
+interact with the thing directly in front of you.
+Action: Report this as OVERWORLD. Do NOT press A.
+
+### 8. POKEMON SELECTION (starter choice)
+Professor Oak's lab with 3 Poke Balls on a table.
 Action: Report this as STARTER_CHOICE.
 
 ## Response Format
 Respond with a JSON object:
 ```json
 {
-    "screen_type": "TITLE|MENU|DIALOG|NAMING|YES_NO|OVERWORLD|STARTER_CHOICE|UNKNOWN",
+    "screen_type": "TITLE|MENU|DIALOG|NAMING|YES_NO|OVERWORLD_DIALOG|OVERWORLD|STARTER_CHOICE|UNKNOWN",
     "reasoning": "What I see on screen (1-2 sentences)",
     "current_name": "letters typed so far (only for NAMING screen)",
     "cursor_position": "the letter the cursor is on (only for NAMING screen)",
     "desired_name": "the full name I want to type (only for NAMING screen)",
-    "actions": ["press_a"]
+    "actions": ["press_b"]
 }
 ```
 
 ## Naming Guidelines
-- For YOUR NAME: Choose a cool, short name (max 7 characters). Examples: RED, ASH, BLUE, ACE, OPUS
-- For RIVAL NAME: Choose a rival name. Examples: GARY, BLUE, RIVAL
-- Names are UPPERCASE only in Pokemon Blue
-- Max 7 characters
-- Count your cursor movements carefully! The grid has 9 columns per row.
+- For YOUR NAME: choose RED (the canonical protagonist of Pokemon Blue).
+- For RIVAL NAME: choose BLUE or GARY.
+- Names are UPPERCASE only. Max 7 characters.
 
 ## Rules
-- GO FAST. Speed matters more than perfection.
-- For DIALOG/TITLE: spam press_a aggressively. Use sequences like: press_a, press_a, press_a, press_a.
-- For NAMING: navigate to letters and type them. You can type MULTIPLE letters per turn — navigate to a letter, press A, navigate to the next letter, press A, etc. Don't waste time going one letter at a time.
-- If you accidentally typed wrong letters (e.g., you mashed A and landed on the naming screen), just press B repeatedly to delete them, then start typing the correct name. It's not a big deal.
-- If you see a screen you don't recognize, press A to try to advance it.
+- **GO FAST but NEVER loop.** If your recent actions all look identical
+  and your position/dialog state haven't changed, STOP spamming A and
+  switch to B or walk away.
+- On TITLE / cutscene / Oak speech: spamming `press_a` is fine.
+- On overworld dialog (talking to an NPC, reading a sign, SNES console,
+  PC, etc.): use `press_b`. Never spam A here.
+- On NAMING: use compute_nav to reach a letter, `press_a` to pick it,
+  `press_b` to delete, `press_start` to commit.
+- If you see something you don't recognize, prefer `press_b` over
+  `press_a` — B is the safer default because it can't trigger an
+  interaction.
 """
 
 

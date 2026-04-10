@@ -60,12 +60,41 @@ press_b, press_start, wait_60, hold_b_120, a_until_dialog_end.
 
 After going through a door/stairs, follow with TWO wait_60 actions.
 
+## Game Boy Controls
+- **A** — Confirm / talk to / interact with the thing in front of you.
+- **B** — Cancel / back out. Also advances dialog. Does NOTHING on an empty tile.
+- **START** — Opens the menu.
+- **D-pad** — Moves the player.
+
+## ⚠️ CRITICAL RULE: Don't spam A to exit dialog
+
+Spamming A creates infinite loops. When the last dialog box closes, the
+NEXT A press TALKS to whatever is still in front of you (NPC, sign,
+SNES, PC, bookshelf) and RE-OPENS the same dialog. Agents have burned
+hundreds of turns stuck on the SNES in Red's bedroom doing exactly this.
+
+**Advance overworld dialog with B, not A.** Inside a dialog box, B does
+the same thing as A (next line / close). When the box closes and you're
+standing in the overworld, B on an empty tile is harmless — no loop.
+
+Only use A when you deliberately want to:
+- Talk to an NPC for the first time
+- Confirm a YES/NO menu choice
+- Pick up an item directly in front of you
+- Select a menu option
+
+For everything else in the overworld, B is the safer choice.
+
 ## Rules
 1. Prefer `target` for movement. The pathfinder knows the walls.
 2. Only use `actions` when you need non-movement inputs or a very short hop.
 3. If your position hasn't changed for several turns you are hitting a wall —
    check the TILE MAP to see which cells are actually walkable.
 4. Ledges are one-way (down only). You cannot climb back up.
+5. **If you see a dialog box and you're in the overworld, use `press_b` to
+   close it. Never spam `press_a` — you will loop.**
+6. If your last 3 turns all sent the same A presses and nothing changed,
+   STOP. Try `press_b` or walk in a different direction instead.
 """
 
 
