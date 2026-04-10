@@ -262,8 +262,12 @@ class Orchestrator:
                     full_grid=full_grid,
                     turn=self.gs.turn_count,
                 )
+            # Stash live sprite list on gs for the explore agent's
+            # pathfinder. Refreshed every turn — never persisted.
+            self.gs.current_sprites = tile_data.get("sprites", []) if tile_data else []
         except Exception as e:
             logger.debug(f"Tile read failed: {e}")
+            self.gs.current_sprites = []
 
         # Phase 3: Route to appropriate agent
         actions, reasoning = await self._decide(pre_state)

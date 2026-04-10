@@ -190,6 +190,13 @@ class GameState:
     last_reasoning: str = ""
     last_actions: List[str] = field(default_factory=list)
 
+    # Live sprite layer for the CURRENT turn (refreshed each turn from
+    # /tiles). Each entry: {"y": int, "x": int, "type": "npc"|"item"|"object",
+    # "picture_id": int}. Cleared and replaced each turn — never persisted.
+    # Used by the pathfinder to block NPC/object cells that the static
+    # accumulator can't see.
+    current_sprites: List[Dict[str, Any]] = field(default_factory=list)
+
     # Stuck detection
     last_badge_turn: int = 0
     last_meaningful_turn: int = 0

@@ -174,9 +174,22 @@ class ExploreAgent:
             usage = result.get("usage", {})
             gs.total_tokens += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
-            # Prefer pathfinder target if the agent supplied one
+            # Prefer pathfinder target if the agent supplied one — UNLESS
+            # the agent is stuck. After 5 consecutive turns at the same
+            # position the pathfinder has clearly failed (it can't see
+            # whatever is blocking us); ignore any target field and force
+            # the agent's raw actions through instead.
+            stuck_run = 0
+            current_pos = (gs.position[0], gs.position[1])
+            for entry in reversed(gs.action_history):
+                if entry.position == current_pos:
+                    stuck_run += 1
+                else:
+                    break
+            pathfinder_locked = stuck_run >= 5
+
             target = parsed.get("target")
-            if target and self.grid is not None:
+            if target and self.grid is not None and not pathfinder_locked:
                 path_actions = self._pathfind_to(gs, target)
                 if path_actions:
                     # Cap to prevent overshooting — re-plan next turn
@@ -254,10 +267,37 @@ class ExploreAgent:
             )
             return []
 
+        # Build the blocked set from live sprites for THIS turn. The
+        # accumulator's stored grid normalizes dynamic entities to floor,
+        # so it has no idea Oak is standing in front of you. Without
+        # this, A* happily routes through NPCs and the agent oscillates
+        # against an invisible wall every turn.
+        #
+        # Rules:
+        #   - All NPCs and static objects (sprites) → blocked.
+        #   - Items → blocked too, UNLESS the goal IS the item (e.g.
+        #     walking onto a Potion to pick it up). Items sitting on
+        #     furniture aren't truly walkable, and items the agent isn't
+        #     targeting shouldn't be in the path.
+        blocked: set[Tuple[int, int]] = set()
+        for sp in getattr(gs, "current_sprites", None) or []:
+            try:
+                sy, sx = int(sp["y"]), int(sp["x"])
+            except Exception:
+                continue
+            cell = (sy, sx)
+            if cell == start:
+                continue  # never block where the player currently is
+            stype = sp.get("type", "npc")
+            if stype == "item" and cell == goal:
+                continue  # allow walking onto a targeted item
+            blocked.add(cell)
+
         path = self.grid.find_path(
             map_id=map_id,
             start=start,
             goal=goal,
+            blocked=blocked,
         )
         if not path or len(path) < 2:
             logger.info(
@@ -353,14 +393,42 @@ class ExploreAgent:
                     f"{entry.actions} → {entry.reasoning[:60]}"
                 )
 
-            # Explicit stuck warning if position hasn't changed
-            recent_positions = [e.position for e in gs.action_history[-3:]]
-            if len(recent_positions) >= 3 and len(set(recent_positions)) == 1:
+            # Explicit stuck warning if position hasn't changed.
+            # Count the longest run of identical positions ending at the
+            # current turn — this is the true "consecutively stuck" count.
+            stuck_run = 0
+            current_pos = (gs.position[0], gs.position[1])
+            for entry in reversed(gs.action_history):
+                if entry.position == current_pos:
+                    stuck_run += 1
+                else:
+                    break
+
+            if stuck_run >= 3:
                 parts.append(
-                    f"\n⚠️ STUCK: Your position has been {recent_positions[0]} for "
-                    f"{len(recent_positions)} turns. You are hitting a wall or obstacle. "
-                    f"Look at the screenshot carefully and try a COMPLETELY DIFFERENT direction. "
-                    f"The stairs/exit may be in a direction you haven't tried."
+                    f"\n⚠️ STUCK: Your position has been {current_pos} for "
+                    f"{stuck_run} turns straight. You are hitting a wall, an "
+                    f"NPC, or some obstacle the pathfinder can't see. Look at "
+                    f"the SCREENSHOT and the SPRITES list above to identify "
+                    f"what's blocking you, then try a COMPLETELY DIFFERENT "
+                    f"direction or route."
+                )
+
+            # Hard lockout: after 5+ stuck turns the pathfinder has clearly
+            # failed for this situation. Force the agent to abandon `target`
+            # and navigate manually with raw `actions` so it has to think
+            # one tile at a time.
+            if stuck_run >= 5:
+                parts.append(
+                    f"\n🚫 PATHFINDER LOCKOUT: You have been stuck at "
+                    f"{current_pos} for {stuck_run} turns. The pathfinder is "
+                    f"NOT working for this situation — it cannot see whatever "
+                    f"is blocking you. For this turn you MUST NOT use the "
+                    f"`target` field. Use `actions` ONLY, with ONE OR TWO "
+                    f"button presses at a time (e.g. [\"walk_down\"], "
+                    f"[\"walk_right\", \"walk_right\"]). Look at the screenshot "
+                    f"and pick the single best move. After you successfully "
+                    f"move off this tile, you may resume using `target` again."
                 )
 
             # Repeated action warning
@@ -455,6 +523,22 @@ class ExploreAgent:
             "",
         ]
 
+        # Build a sprite overlay from gs.current_sprites so the LLM SEES
+        # NPCs/items/objects in their live positions. The accumulator
+        # stores only static terrain — without this overlay the rendered
+        # map shows Oak's tile as plain floor and the agent has no clue
+        # there's a person standing on it.
+        sprite_chars: Dict[Tuple[int, int], str] = {}
+        for sp in getattr(gs, "current_sprites", None) or []:
+            try:
+                sy, sx = int(sp["y"]), int(sp["x"])
+            except Exception:
+                continue
+            stype = sp.get("type", "npc")
+            sprite_chars[(sy, sx)] = {
+                "npc": "N", "item": "I", "object": "O"
+            }.get(stype, "N")
+
         col_nums = " ".join(f"{x:02d}" for x in range(min_x, max_x + 1))
         lines.append(f"       x:{col_nums}")
 
@@ -463,10 +547,23 @@ class ExploreAgent:
             for x in range(min_x, max_x + 1):
                 if y == py and x == px:
                     row_chars.append(" P")
+                elif (y, x) in sprite_chars:
+                    row_chars.append(f" {sprite_chars[(y, x)]}")
                 else:
                     ch = mg.cells.get((y, x))
                     row_chars.append(f" {ch}" if ch else " ·")
             lines.append(f"  y:{y:02d}  {' '.join(row_chars)}")
+
+        if sprite_chars:
+            lines.append("")
+            lines.append(
+                "Sprites visible THIS TURN (NPCs/items/objects). They "
+                "block movement — the pathfinder will route around them. "
+                "To talk to or pick up a sprite, walk to a tile ADJACENT "
+                "to it, face it, and press_a:"
+            )
+            for (sy, sx), ch in sorted(sprite_chars.items()):
+                lines.append(f"  {ch} at (y={sy}, x={sx})")
 
         return "\n".join(lines)
 
