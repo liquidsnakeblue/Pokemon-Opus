@@ -68,8 +68,16 @@ class BattleAgent:
         # Build type analysis
         type_analysis = self._analyze_matchup(gs)
 
-        # For simple wild encounters with clear type advantage, use heuristics
-        if gs.battle_type == "wild" and self._is_simple_decision(gs, type_analysis):
+        # For simple wild encounters with clear type advantage, use heuristics.
+        # EXCEPTION: with only one Pokemon, ALWAYS use the LLM path. The
+        # heuristic skips vision entirely, so it can't see when we're stuck
+        # in a SWITCH/STATS/CANCEL submenu and can't pick `cancel`. The LLM
+        # path with screenshot is required for menu-state recovery.
+        if (
+            gs.battle_type == "wild"
+            and len(gs.party) >= 2
+            and self._is_simple_decision(gs, type_analysis)
+        ):
             return self._heuristic_decide(gs, type_analysis)
 
         # Complex situation — use LLM

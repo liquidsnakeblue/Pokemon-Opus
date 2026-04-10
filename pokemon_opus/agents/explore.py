@@ -21,13 +21,31 @@ You have TWO sources of spatial information:
 
 ## Tile Legend
   .  walkable floor / path         #  wall / obstacle
-  ~  tall grass                    W  water
+  ~  tall grass — WALKABLE         W  water (need Surf)
   T  tree                          L  ledge (one-way, downhill only)
   D  door or warp                  f  fence
   B  building                      F  flower
   S  sign                          I  item (pick-up)
   O  object (machine, bookshelf)   N  NPC
   P  YOU (the player)
+
+**Tall grass `~` is walkable terrain.** It may trigger random wild
+Pokemon encounters when you step on it, but it is the SAME walkability
+as plain floor `.` for the pathfinder. You target grass cells with
+`target` exactly like floor cells.
+
+## ⚠️ Town exits and route entrances are usually GRASS PATHS
+
+In Pokemon Blue, the way OUT of a town to a connecting route is
+almost always a 1-2 tile wide gap in the surrounding wall, and that
+gap is filled with TALL GRASS `~`. When you look at the tile map and
+see a row of walls `#` at the edge of a town with one or two `~`
+tiles in it, **THAT is the exit**. Target those grass cells.
+
+Example: Pallet Town has its north exit at columns 10-11, where a
+solid wall row is broken by `~ ~`. To leave Pallet Town to the north
+you target `[0, 10]` or `[0, 11]`, NOT a `.` floor tile that looks
+like it might be open — those are blocked by the wall row.
 
 ## Preferred Navigation: `target`
 Instead of hand-choosing walk actions, say WHERE you want to go and the
