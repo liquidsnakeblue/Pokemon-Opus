@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "Pillow>=10.0.0",
+    # Emulator backend (vendored from NousResearch/pokemon-agent, MIT — see LICENSES/)
+    "pyboy>=2.0.0",
+    "aiofiles>=23.0.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +26,13 @@ dev = [
 
 [project.scripts]
 pokemon-opus = "pokemon_opus.main:main"
+pokemon-agent-server = "pokemon_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pokemon_opus*", "pokemon_agent*"]
+
+[tool.setuptools.package-data]
+"pokemon_agent.dashboard" = ["static/**/*"]
 
 [tool.ruff]
 line-length = 100

@@ -15,6 +15,13 @@ data/sprites/
 *.state
 game_files/
 
+# ROM files — never commit game ROMs
+*.gb
+*.gbc
+*.gba
+*.sav
+*.ss*
+
 # Logs
 *.log
 *.jsonl
