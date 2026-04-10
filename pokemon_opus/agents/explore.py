@@ -198,9 +198,16 @@ class ExploreAgent:
             # position the pathfinder has clearly failed (it can't see
             # whatever is blocking us); ignore any target field and force
             # the agent's raw actions through instead.
+            # Count consecutive EXPLORE-mode turns at the same position.
+            # Battle turns share the overworld position where the fight
+            # started, so counting them here was falsely inflating the
+            # stuck-run and locking out the pathfinder the moment the
+            # agent stepped out of a long battle.
             stuck_run = 0
             current_pos = (gs.position[0], gs.position[1])
             for entry in reversed(gs.action_history):
+                if entry.mode != "explore":
+                    break
                 if entry.position == current_pos:
                     stuck_run += 1
                 else:
@@ -441,9 +448,16 @@ class ExploreAgent:
             # Explicit stuck warning if position hasn't changed.
             # Count the longest run of identical positions ending at the
             # current turn — this is the true "consecutively stuck" count.
+            # Count consecutive EXPLORE-mode turns at the same position.
+            # Battle turns share the overworld position where the fight
+            # started, so counting them here was falsely inflating the
+            # stuck-run and locking out the pathfinder the moment the
+            # agent stepped out of a long battle.
             stuck_run = 0
             current_pos = (gs.position[0], gs.position[1])
             for entry in reversed(gs.action_history):
+                if entry.mode != "explore":
+                    break
                 if entry.position == current_pos:
                     stuck_run += 1
                 else:

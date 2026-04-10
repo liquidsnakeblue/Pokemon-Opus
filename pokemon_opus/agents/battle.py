@@ -20,7 +20,7 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 ```json
 {
     "reasoning": "Brief tactical analysis (2-3 sentences)",
-    "decision": "fight|run|switch|item|cancel",
+    "decision": "fight|run|switch|item|cancel|advance",
     "move_index": 0,
     "switch_index": 0,
     "item_name": ""
@@ -34,6 +34,20 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 - **item**: Use healing items when lead Pokemon is below 30% HP in important battles.
 - **cancel**: When the SWITCH/STATS/CANCEL menu is open on a Pokemon
   and you want to back out — picks the CANCEL option in that menu.
+- **advance**: Use when the battle is showing DIALOG TEXT that you
+  just need to press through — enemy fainted, XP gained, level-up,
+  learned a move, "Got away safely!", trainer post-battle speech,
+  etc. ANY time the screen shows text with no menu and you'd say
+  "I just need to press A to continue", pick `advance`. Don't pick
+  fight/run/cancel as a proxy for "advance dialog" — those send
+  menu-navigation button sequences that don't advance dialog text.
+  Signs you should pick `advance`:
+    • Enemy HP is 0 and the screen shows fainting/XP/level text
+    • A text box is visible without a menu cursor
+    • "<Pokemon> gained XXX EXP. Points!"
+    • "<Pokemon> grew to level N!"
+    • "Got away safely!" / "Can't escape!"
+    • Post-trainer-battle speech
 
 ## ⚠️ CRITICAL RULE
 
@@ -221,6 +235,13 @@ class BattleAgent:
                     # SWITCH/STATS/CANCEL submenu — cursor starts on
                     # SWITCH, navigate down twice to CANCEL and select.
                     return ["press_down", "press_down", "press_a"], reasoning
+                case "advance":
+                    # Post-KO / XP gain / level-up / escape / trainer
+                    # speech — any dialog text during a battle. Mash
+                    # press_a to advance text lines. Don't emit menu
+                    # navigation presses here — they do nothing during
+                    # dialog and just waste frames.
+                    return ["press_a", "press_a", "press_a"], reasoning
                 case _:
                     return self._fight_move(0), f"Unknown decision '{decision}', using first move"
 
