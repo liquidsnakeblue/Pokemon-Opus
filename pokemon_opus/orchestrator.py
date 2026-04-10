@@ -126,6 +126,36 @@ class Orchestrator:
                 f"Party: {len(self.gs.party)} Pokemon"
             )
 
+            # Seed initial objectives inside the episode, AFTER reset_episode
+            # cleared the objective list. Previously main.py called this
+            # before play_episode(), which meant reset_episode() would
+            # immediately wipe the objectives it had just created.
+            try:
+                await self.strategist.generate_initial_objectives(self.gs)
+                if self.gs.active_objectives:
+                    logger.info(
+                        f"Seeded {len(self.gs.active_objectives)} initial objectives: "
+                        + ", ".join(o.name for o in self.gs.active_objectives)
+                    )
+                    await self.stream.broadcast_objective_update(
+                        [o.model_dump() for o in self.gs.active_objectives]
+                    )
+            except Exception as e:
+                logger.warning(f"Initial objective seeding failed: {e}")
+
+            # Seed a first milestone so the panel isn't empty during the
+            # opening minutes before anything game-meaningful happens.
+            start_milestone = Milestone(
+                name="Episode Started",
+                turn=0,
+                details=f"Began at {self.gs.map_name}",
+                category="episode",
+            )
+            self.gs.milestones.append(start_milestone)
+            await self.stream.broadcast_milestone(
+                start_milestone.name, start_milestone.turn, start_milestone.details
+            )
+
             # Main game loop
             while not self.gs.game_over and self.gs.turn_count < self.config.max_turns_per_episode:
                 try:
@@ -285,6 +315,7 @@ class Orchestrator:
 
         # Phase 9: Map update
         if self.map_mgr:
+            was_new = self.gs.map_id not in self.gs.visited_maps
             self.map_mgr.record_visit(
                 self.gs.map_id, self.gs.map_name, self.gs.turn_count, self.gs.position
             )
@@ -295,6 +326,17 @@ class Orchestrator:
                     actions,
                 )
             self.gs.visited_maps.add(self.gs.map_id)
+
+            # Record a milestone the first time we enter a new area.
+            if was_new and self.gs.map_name and self.gs.map_name != "Unknown":
+                m = Milestone(
+                    name=f"Discovered {self.gs.map_name}",
+                    turn=self.gs.turn_count,
+                    details=f"First visit to {self.gs.map_name}",
+                    category="discovery",
+                )
+                self.gs.milestones.append(m)
+                await self.stream.broadcast_milestone(m.name, m.turn, m.details)
 
         # Phase 9b: Objective completion check
         if self.objectives and self.gs.turn_count % self.config.completion_check_interval == 0:

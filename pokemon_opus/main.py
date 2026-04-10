@@ -115,8 +115,9 @@ async def run() -> None:
         context_builder=context,
     )
 
-    # Generate initial objectives
-    await orchestrator.strategist.generate_initial_objectives(orchestrator.gs)
+    # Initial objectives are seeded inside play_episode() after
+    # reset_episode() clears the objective list. Doing it here would
+    # be wiped on the very next line.
 
     logger.info(f"Viewer available at http://localhost:{config.streaming_port}")
     logger.info("Starting episode...")
