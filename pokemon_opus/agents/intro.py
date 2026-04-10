@@ -321,7 +321,15 @@ class IntroAgent:
         parts.append(f"Map: {map_info.get('map_name', '?')} (id={map_info.get('map_id', '?')})")
 
         if gs.action_history:
-            parts.append("\nRecent actions:")
+            parts.append(
+                "\nYour previous turns (YOUR OWN past notes — these may be"
+                " stale or wrong, especially descriptions of the screen."
+                " The SCREENSHOT above is the only source of truth for"
+                " what is on screen RIGHT NOW. Use this history only to"
+                " stay coherent across turns and avoid repeating failed"
+                " actions — do NOT trust your past 'I see X' claims if"
+                " the current screenshot disagrees):"
+            )
             for entry in gs.action_history[-3:]:
                 parts.append(f"  T{entry.turn}: {entry.actions} → {entry.reasoning[:80]}")
 

@@ -85,15 +85,49 @@ Only use A when you deliberately want to:
 
 For everything else in the overworld, B is the safer choice.
 
+## ⚠️ CRITICAL RULE: Doors are DOORMATS — you must STEP THROUGH them
+
+Tiles marked `D` are doors, stairs, ladders, holes, and other warps.
+
+**Mental model:** A `D` tile is a doormat directly in front of the door.
+Walking onto the doormat just puts you ON the doormat — it does NOT
+transition you. To actually use the door, you must take ONE MORE STEP
+in the same direction, *through* the door.
+
+- Door on the SOUTH wall of a room → walk DOWN onto the D, then DOWN again.
+- Door on the NORTH wall of a room → walk UP onto the D, then UP again.
+- Door on the WEST wall of a room → walk LEFT onto the D, then LEFT again.
+- Door on the EAST wall of a room → walk RIGHT onto the D, then RIGHT again.
+
+The direction you step *through* a door has to match the wall the
+door is set into. Going down onto a south-wall door and then up off
+of it does NOT warp — you have to keep going in the wall direction.
+
+You do NOT press A on doors. A does nothing on a door.
+
+**If the `You are standing on:` line says you're already on a door**,
+look at the tile map to see which wall the door is in (the wall row
+or column adjacent to your D tile) and walk one more step in that
+direction to pass through.
+
+After triggering a warp, send TWO `wait_60` actions to let the fade
+transition complete before your next move.
+
+Common failure mode: agent oscillates between the D tile and the
+walkable tile next to it, never stepping *through* the door. If you
+catch yourself doing this, the fix is: take TWO steps in the wall
+direction, not one.
+
 ## Rules
 1. Prefer `target` for movement. The pathfinder knows the walls.
 2. Only use `actions` when you need non-movement inputs or a very short hop.
 3. If your position hasn't changed for several turns you are hitting a wall —
    check the TILE MAP to see which cells are actually walkable.
 4. Ledges are one-way (down only). You cannot climb back up.
-5. **If you see a dialog box and you're in the overworld, use `press_b` to
+5. **Doors (`D`) are used by WALKING onto them. Never press A on a door.**
+6. **If you see a dialog box and you're in the overworld, use `press_b` to
    close it. Never spam `press_a` — you will loop.**
-6. If your last 3 turns all sent the same A presses and nothing changed,
+7. If your last 3 turns all sent the same A presses and nothing changed,
    STOP. Try `press_b` or walk in a different direction instead.
 """
 
@@ -302,7 +336,16 @@ class ExploreAgent:
 
         # Recent action history with positions — critical for stuck detection
         if gs.action_history:
-            parts.append("\nRecent actions and results:")
+            parts.append(
+                "\nYour previous turns (YOUR OWN past notes — these may be"
+                " stale or wrong, especially descriptions of the screen."
+                " The SCREENSHOT above is the only source of truth for"
+                " what is on screen RIGHT NOW, and the TILE MAP above is"
+                " the source of truth for walls/doors/positions. Use this"
+                " history only to stay coherent across turns and detect"
+                " when you are stuck — do NOT trust your past 'I see X'"
+                " claims if the current screenshot or tile map disagrees):"
+            )
             for entry in gs.action_history[-5:]:
                 pos_str = f"({entry.position[0]},{entry.position[1]})"
                 parts.append(
@@ -381,9 +424,30 @@ class ExploreAgent:
         # the grid with no counting or arithmetic.
         height = max_y - min_y + 1
         width = max_x - min_x + 1
+
+        # What tile is the player actually standing on? The grid cell at
+        # (py, px) renders as 'P', which hides the underlying terrain.
+        # Tell the agent explicitly — especially important for doors,
+        # stairs, and warps, which trigger the moment you step onto them
+        # so the agent might not realize it's already on one.
+        under_tile = mg.cells.get((py, px), "?")
+        under_desc = {
+            ".": "walkable floor",
+            "#": "(standing on a wall — unexpected!)",
+            "~": "TALL GRASS (wild Pokemon may appear when you walk)",
+            "W": "WATER (you are surfing)",
+            "D": "a DOOR/STAIRS/WARP doormat — take ONE MORE STEP in the wall direction (the direction the door faces) to pass THROUGH it. Stepping off in the opposite direction will NOT warp you.",
+            "S": "a sign",
+            "L": "a LEDGE (one-way south — you can jump off, not back up)",
+            "I": "an item tile",
+            "O": "an interactive object",
+            "N": "an NPC tile",
+        }.get(under_tile, f"tile '{under_tile}'")
+
         lines: List[str] = [
             f"Current map is {height} rows × {width} cols.",
             f"YOU are at (y={py}, x={px}), marked 'P' in the grid below.",
+            f"You are standing on: {under_desc}.",
             f"Valid targets MUST be in the ranges y∈[{min_y},{max_y}], x∈[{min_x},{max_x}].",
             "The y/x numbers in the row/column labels are ABSOLUTE map",
             "coordinates — use them directly in the `target` field. DO NOT",
