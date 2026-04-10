@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import Config
 from .game_client import GameClient
+from .map.grid import GridAccumulator
 from .state import (
     ActionEntry, GameMode, GameState, Milestone, Move, Pokemon, StateDelta,
 )
@@ -47,6 +48,9 @@ class Orchestrator:
         self.context = context_builder
         self.gs = GameState()
 
+        # Accumulates tile observations into a per-map grid for A* pathfinding
+        self.grid = GridAccumulator()
+
         # Agents (lazily imported to avoid circular deps)
         self._intro_agent = None
         self._explore_agent = None
@@ -71,7 +75,9 @@ class Orchestrator:
     def explore_agent(self):
         if self._explore_agent is None:
             from .agents.explore import ExploreAgent
-            self._explore_agent = ExploreAgent(self.config, self.llm, game_client=self.game)
+            self._explore_agent = ExploreAgent(
+                self.config, self.llm, game_client=self.game, grid=self.grid
+            )
         return self._explore_agent
 
     @property
@@ -180,6 +186,25 @@ class Orchestrator:
             self.gs.turn_count, self.gs.game_mode.value, self.gs.map_name
         )
 
+        # Phase 2b: Read tile grid and feed into the accumulator.
+        # This runs before the agent decides, so the agent can query
+        # self.grid for pathfinding in the current map.
+        tile_data: Optional[Dict[str, Any]] = None
+        try:
+            tile_data = await self.game.get_tiles()
+            tgrid = tile_data.get("grid", [])
+            if tgrid:
+                self.grid.observe(
+                    map_id=self.gs.map_id,
+                    map_name=self.gs.map_name,
+                    player_y=self.gs.position[0],
+                    player_x=self.gs.position[1],
+                    tile_grid=tgrid,
+                    turn=self.gs.turn_count,
+                )
+        except Exception as e:
+            logger.debug(f"Tile read failed: {e}")
+
         # Phase 3: Route to appropriate agent
         actions, reasoning = await self._decide(pre_state)
         self.gs.last_reasoning = reasoning
@@ -258,13 +283,10 @@ class Orchestrator:
         # Inject map data from the map graph
         if self.map_mgr:
             serialized["map"] = self._serialize_map()
-        # Inject live tile grid from emulator
-        try:
-            tile_data = await self.game.get_tiles()
+        # Inject live tile grid from emulator (fetched earlier this turn)
+        if tile_data is not None:
             serialized["tile_grid"] = tile_data.get("grid", [])
             serialized["tile_sprites"] = tile_data.get("sprites", [])
-        except Exception as e:
-            logger.debug(f"Tile read failed: {e}")
         await self.stream.broadcast_turn_complete(
             turn=self.gs.turn_count,
             mode=self.gs.game_mode.value,
