@@ -36,6 +36,7 @@ export default function App() {
         <div className="flex flex-col gap-2 w-[460px] shrink-0 min-h-0">
           <GameScreen mode={gameState?.mode ?? 'explore'} />
           <MapView
+            fullGrid={tiles?.fullGrid}
             tileGrid={tiles?.tileGrid ?? gameState?.tile_grid}
             mapName={gameState?.player.map_name}
             position={

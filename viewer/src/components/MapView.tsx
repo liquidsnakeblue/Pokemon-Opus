@@ -1,12 +1,18 @@
 import { useMemo } from 'react';
 
 interface MapViewProps {
+  /** The entire current map, classified. Prefer this over `tileGrid`. */
+  fullGrid?: string[][];
+  /** Legacy 9x10 camera viewport — fallback when full_grid isn't populated yet. */
   tileGrid?: string[][];
-  mapName?: string;
+  /** Player absolute position on the full map (or on the viewport for fallback). */
   position?: [number, number];
+  mapName?: string;
 }
 
-// Cell size — large enough to see detail
+// Target cell size in SVG user units. The SVG scales to fit the panel via
+// preserveAspectRatio, so this controls the aspect ratio / visual density
+// rather than the absolute pixel size.
 const CELL = 12;
 const GRID_LINE = 0.5;
 
@@ -36,13 +42,10 @@ function PlayerMarker({ x, y, size }: { x: number; y: number; size: number }) {
   const cx = x + size / 2;
   const cy = y + size / 2;
   const s = size * 0.35;
-  // Triangle pointing down
   const points = `${cx},${cy + s} ${cx - s},${cy - s * 0.6} ${cx + s},${cy - s * 0.6}`;
   return (
     <>
-      {/* Glow */}
       <circle cx={cx} cy={cy} r={size * 0.45} fill="#e03030" opacity={0.15} />
-      {/* Triangle */}
       <polygon points={points} fill="#1a1a2e" stroke="#e03030" strokeWidth={0.8} />
     </>
   );
@@ -55,9 +58,7 @@ function NpcMarker({ x, y, size }: { x: number; y: number; size: number }) {
   const r = size * 0.3;
   return (
     <>
-      {/* Body circle */}
       <circle cx={cx} cy={cy} r={r} fill="#f06090" stroke="#d04070" strokeWidth={0.6} />
-      {/* Eyes */}
       <circle cx={cx - r * 0.35} cy={cy - r * 0.15} r={r * 0.18} fill="white" />
       <circle cx={cx + r * 0.35} cy={cy - r * 0.15} r={r * 0.18} fill="white" />
       <circle cx={cx - r * 0.35} cy={cy - r * 0.15} r={r * 0.09} fill="#1a1a2e" />
@@ -97,22 +98,50 @@ function ObjectMarker({ x, y, size }: { x: number; y: number; size: number }) {
   );
 }
 
-export function MapView({ tileGrid, mapName, position }: MapViewProps) {
+// Sign marker (small vertical rectangle on a stake)
+function SignMarker({ x, y, size }: { x: number; y: number; size: number }) {
+  const cx = x + size / 2;
+  const top = y + size * 0.2;
+  const w = size * 0.45;
+  const h = size * 0.4;
+  return (
+    <>
+      <rect
+        x={cx - w / 2}
+        y={top}
+        width={w}
+        height={h}
+        fill="#8b6d3f"
+        stroke="#5c4422"
+        strokeWidth={0.5}
+        rx={0.5}
+      />
+      <line
+        x1={cx}
+        y1={top + h}
+        x2={cx}
+        y2={y + size * 0.85}
+        stroke="#5c4422"
+        strokeWidth={0.8}
+      />
+    </>
+  );
+}
+
+export function MapView({ fullGrid, tileGrid, mapName, position }: MapViewProps) {
+  // Prefer the full current-map grid if present. Otherwise fall back to
+  // the legacy 9x10 viewport snapshot so the panel still shows something
+  // during the brief window before the first tile_update arrives.
   const gridData = useMemo(() => {
-    if (!tileGrid || tileGrid.length === 0) return null;
-    // Trim border columns (X) and unknown rows from bottom
-    const cols = Math.min(tileGrid[0].length, 18);
-    // Find last non-unknown, non-border row
-    let lastRow = tileGrid.length - 1;
-    while (lastRow > 0) {
-      const row = tileGrid[lastRow];
-      const allHidden = row.slice(0, cols).every(c => c === '?' || c === 'X');
-      if (!allHidden) break;
-      lastRow--;
-    }
-    const rows = lastRow + 1;
-    return { rows, cols, grid: tileGrid.slice(0, rows) };
-  }, [tileGrid]);
+    const grid = fullGrid && fullGrid.length > 0 ? fullGrid : tileGrid;
+    if (!grid || grid.length === 0) return null;
+
+    const rows = grid.length;
+    const cols = grid[0]?.length ?? 0;
+    if (rows === 0 || cols === 0) return null;
+
+    return { rows, cols, grid, usingFullMap: !!(fullGrid && fullGrid.length > 0) };
+  }, [fullGrid, tileGrid]);
 
   if (!gridData) {
     return (
@@ -130,6 +159,12 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
   const svgW = gridData.cols * CELL;
   const svgH = gridData.rows * CELL;
 
+  // The player position is in the same coordinate space as the grid we're
+  // rendering: either absolute map coords (full map) or viewport-local
+  // coords (fallback). In both cases the backend sends them matching.
+  const playerY = position?.[0];
+  const playerX = position?.[1];
+
   return (
     <div className="panel flex flex-col" style={{ minHeight: '160px' }}>
       <div className="panel-header">
@@ -137,6 +172,7 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
         {position && (
           <span className="ml-auto text-[10px] text-text-secondary font-mono">
             [{position[0]},{position[1]}]
+            {!gridData.usingFullMap && ' (viewport)'}
           </span>
         )}
       </div>
@@ -155,7 +191,7 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
 
           {/* Tile cells */}
           {gridData.grid.map((row, y) =>
-            row.slice(0, gridData.cols).map((cell, x) => {
+            row.map((cell, x) => {
               if (cell === 'X') return null;
               const colors = COLORS[cell] ?? COLORS['#'];
               return (
@@ -174,38 +210,64 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
             })
           )}
 
-          {/* Sprite markers (render on top of tiles) */}
+          {/* Sprite markers (render on top of tile cells) */}
           {gridData.grid.map((row, y) =>
-            row.slice(0, gridData.cols).map((cell, x) => {
+            row.map((cell, x) => {
+              const px = x * CELL;
+              const py = y * CELL;
               if (cell === 'N') {
-                return <NpcMarker key={`npc-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
+                return <NpcMarker key={`npc-${y}-${x}`} x={px} y={py} size={CELL} />;
               }
               if (cell === 'I') {
-                return <ItemMarker key={`item-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
+                return <ItemMarker key={`item-${y}-${x}`} x={px} y={py} size={CELL} />;
               }
               if (cell === 'O') {
-                return <ObjectMarker key={`obj-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
+                return <ObjectMarker key={`obj-${y}-${x}`} x={px} y={py} size={CELL} />;
+              }
+              if (cell === 'S') {
+                return <SignMarker key={`sign-${y}-${x}`} x={px} y={py} size={CELL} />;
               }
               return null;
             })
           )}
 
-          {/* Player marker (render last, on top of everything) */}
-          {gridData.grid.map((row, y) =>
-            row.slice(0, gridData.cols).map((cell, x) => {
-              if (cell === 'P') {
-                return <PlayerMarker key={`player-${y}-${x}`} x={x * CELL} y={y * CELL} size={CELL} />;
-              }
-              return null;
-            })
+          {/* Player marker — rendered last so nothing overlaps it.
+              If we're using the full map, place the marker at absolute
+              (playerY, playerX). If we're using the fallback viewport,
+              find the 'P' cell inside the viewport grid. */}
+          {gridData.usingFullMap && playerY !== undefined && playerX !== undefined ? (
+            <PlayerMarker
+              key="player-marker"
+              x={playerX * CELL}
+              y={playerY * CELL}
+              size={CELL}
+            />
+          ) : (
+            gridData.grid.map((row, y) =>
+              row.map((cell, x) => {
+                if (cell === 'P') {
+                  return (
+                    <PlayerMarker
+                      key={`player-${y}-${x}`}
+                      x={x * CELL}
+                      y={y * CELL}
+                      size={CELL}
+                    />
+                  );
+                }
+                return null;
+              })
+            )
           )}
 
           {/* Grid lines overlay for structure */}
           {Array.from({ length: gridData.cols + 1 }).map((_, x) => (
             <line
               key={`vl-${x}`}
-              x1={x * CELL} y1={0}
-              x2={x * CELL} y2={svgH}
+              x1={x * CELL}
+              y1={0}
+              x2={x * CELL}
+              y2={svgH}
               stroke="#1a1a2e"
               strokeWidth={GRID_LINE * 0.5}
               opacity={0.3}
@@ -214,8 +276,10 @@ export function MapView({ tileGrid, mapName, position }: MapViewProps) {
           {Array.from({ length: gridData.rows + 1 }).map((_, y) => (
             <line
               key={`hl-${y}`}
-              x1={0} y1={y * CELL}
-              x2={svgW} y2={y * CELL}
+              x1={0}
+              y1={y * CELL}
+              x2={svgW}
+              y2={y * CELL}
               stroke="#1a1a2e"
               strokeWidth={GRID_LINE * 0.5}
               opacity={0.3}
