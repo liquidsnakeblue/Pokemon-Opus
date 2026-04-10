@@ -170,30 +170,10 @@ class BattleAgent:
             usage = result.get("usage", {})
             gs.total_tokens += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
-            # Hard guard: switching with <2 Pokemon is impossible — the
-            # menu only shows your current Pokemon and selecting it opens
-            # its summary, trapping the agent in the menu. Force a fight
-            # instead, regardless of what the LLM picked. Also prepend
-            # B presses to back out of any sub-menu we may already be
-            # stuck in (e.g. if the previous turn opened the Pokemon
-            # menu before this guard existed).
-            cancel_prefix: List[str] = []
-            if decision == "switch" and len(gs.party) < 2:
-                logger.info(
-                    f"Battle: LLM picked switch with {len(gs.party)} Pokemon — "
-                    f"overriding to fight (cannot switch with one Pokemon)"
-                )
-                decision = "fight"
-                cancel_prefix = ["press_b", "press_b", "press_b"]
-                reasoning = (
-                    f"[override] Cannot switch with only {len(gs.party)} Pokemon. "
-                    f"Backing out of any open menu and attacking. " + reasoning
-                )
-
             match decision:
                 case "fight":
                     move_idx = parsed.get("move_index", 0)
-                    return cancel_prefix + self._fight_move(move_idx), reasoning
+                    return self._fight_move(move_idx), reasoning
                 case "run":
                     return self._run_action(), reasoning
                 case "switch":
