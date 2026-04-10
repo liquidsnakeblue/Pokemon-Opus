@@ -169,6 +169,7 @@ class GameState:
 
     # Flags
     has_pokedex: bool = False
+    has_oaks_parcel: bool = False
     pokedex_owned: int = 0
     pokedex_seen: int = 0
 

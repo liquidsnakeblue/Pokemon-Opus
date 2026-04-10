@@ -385,6 +385,32 @@ class ExploreAgent:
                 hp_str = f"{p.hp}/{p.max_hp}" if p.max_hp > 0 else "?"
                 parts.append(f"  {i+1}. {p.species} Lv{p.level} HP:{hp_str}")
 
+        # Bag — RAM truth for what items the player actually owns. The
+        # objective text below may say "Get Oak's Parcel" but if the bag
+        # already lists it, the objective is stale and you should ignore
+        # it. The bag is the SOURCE OF TRUTH for inventory.
+        bag = getattr(gs, "bag", None) or []
+        parts.append("\nBag (RAM truth — what you ACTUALLY have right now):")
+        if bag:
+            for item in bag:
+                if isinstance(item, dict):
+                    name = item.get("item", "?")
+                    qty = item.get("quantity", 1)
+                    parts.append(f"  • {name} ×{qty}")
+                else:
+                    parts.append(f"  • {item}")
+        else:
+            parts.append("  (empty)")
+
+        # Key game flags from RAM — for cross-checking objectives.
+        flags_bits: List[str] = []
+        if getattr(gs, "has_pokedex", False):
+            flags_bits.append("has_pokedex=True")
+        if getattr(gs, "has_oaks_parcel", False):
+            flags_bits.append("has_oaks_parcel=True")
+        if flags_bits:
+            parts.append("Game flags: " + ", ".join(flags_bits))
+
         # Objectives
         active = gs.active_objectives
         if active:

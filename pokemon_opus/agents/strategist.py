@@ -177,6 +177,33 @@ class Strategist:
                 f"HP:{hp_pct}% Moves: {moves}"
             )
 
+        # Bag (RAM truth) — the most important signal for objective
+        # planning. If a "Get X" or "Deliver X" objective contradicts
+        # the bag (e.g. objective says "get parcel" but parcel is
+        # already in the bag) you MUST mark it complete or abandon it.
+        # Don't create new objectives that ignore the bag.
+        bag = getattr(gs, "bag", None) or []
+        parts.append("\n== BAG (RAM truth — what is ACTUALLY owned) ==")
+        if bag:
+            for item in bag:
+                if isinstance(item, dict):
+                    name = item.get("item", "?")
+                    qty = item.get("quantity", 1)
+                    parts.append(f"  • {name} ×{qty}")
+                else:
+                    parts.append(f"  • {item}")
+        else:
+            parts.append("  (empty)")
+
+        # Key game flags from RAM
+        flags_bits: List[str] = []
+        if getattr(gs, "has_pokedex", False):
+            flags_bits.append("has_pokedex=True")
+        if getattr(gs, "has_oaks_parcel", False):
+            flags_bits.append("has_oaks_parcel=True")
+        if flags_bits:
+            parts.append("Game flags: " + ", ".join(flags_bits))
+
         # Next gym target
         next_gym = None
         for gym in GYM_ORDER:

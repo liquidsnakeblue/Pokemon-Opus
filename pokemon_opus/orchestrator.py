@@ -493,6 +493,7 @@ class Orchestrator:
         # Flags
         flags = raw.get("flags", {})
         self.gs.has_pokedex = flags.get("has_pokedex", False)
+        self.gs.has_oaks_parcel = flags.get("has_oaks_parcel", False)
         self.gs.pokedex_owned = flags.get("pokedex_owned", 0)
         self.gs.pokedex_seen = flags.get("pokedex_seen", 0)
 
