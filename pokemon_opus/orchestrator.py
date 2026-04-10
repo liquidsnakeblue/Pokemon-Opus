@@ -496,6 +496,8 @@ class Orchestrator:
         self.gs.has_oaks_parcel = flags.get("has_oaks_parcel", False)
         self.gs.pokedex_owned = flags.get("pokedex_owned", 0)
         self.gs.pokedex_seen = flags.get("pokedex_seen", 0)
+        self.gs.pokedex_owned_species = flags.get("pokedex_owned_species", [])
+        self.gs.pokedex_seen_species = flags.get("pokedex_seen_species", [])
 
     def _parse_pokemon(self, data: Dict[str, Any]) -> Pokemon:
         """Parse a Pokemon dict from the emulator state."""

@@ -172,6 +172,8 @@ class GameState:
     has_oaks_parcel: bool = False
     pokedex_owned: int = 0
     pokedex_seen: int = 0
+    pokedex_owned_species: List[str] = field(default_factory=list)
+    pokedex_seen_species: List[str] = field(default_factory=list)
 
     # Tracking
     action_history: List[ActionEntry] = field(default_factory=list)

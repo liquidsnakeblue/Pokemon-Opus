@@ -74,11 +74,44 @@ Town"). Never leave a contradicted objective active.
 - Squirtle is the recommended starter (beats Brock and Blaine easily).
 - Grinding is sometimes necessary — recommend it when team is underleveled.
 
+## 🎯 DUAL PRIMARY GOALS
+
+This run has TWO parallel primary goals, BOTH required for completion:
+
+1. **Beat the Elite Four** (become Champion). This is the main
+   progression spine: 8 badges → Victory Road → Elite Four.
+
+2. **Complete the Pokédex** (catch one of every obtainable species).
+   The agent should be CATCHING wild Pokemon it hasn't owned yet,
+   not just KOing them. The battle agent knows to preserve HP and
+   throw Poké Balls when it sees a new species — but YOU decide
+   where to go. That means:
+   - Ensuring the agent always has Poké Balls in the bag (add
+     "Buy Poké Balls" objectives when stock is low).
+   - Routing through grass patches on routes where known new
+     species can spawn, even if a more direct path exists, when
+     Pokédex progress lags behind story progress.
+   - Creating "Catch X" objectives for specific species when the
+     agent is near a known habitat for a missing one.
+   - Reminding the agent of version-exclusive obstacles: some
+     species are Blue-exclusive, some require fishing, some need
+     Safari Zone, some need trade evolution (Machoke, Haunter,
+     Kadabra, Graveler), and Mew is not legitimately obtainable.
+
+The RAM section below lists exactly which species the player has
+seen and owned. Use this to decide when Pokédex work should
+become a priority objective. A good heuristic: if `owned` is
+more than ~15 species behind what's obtainable in the current
+region, the next objective should involve catching, not just
+story progression.
+
 ## Constraints
 - Max 8 active objectives at a time
 - Objectives should be specific and actionable, not vague
 - Always have at least one progression objective (next gym, next story beat)
 - Include healing objectives when party HP is low
+- Include at least one Pokédex-related objective when the player
+  has the Pokédex and owned count lags behind story progress
 """
 
 
@@ -231,6 +264,30 @@ class Strategist:
             flags_bits.append("has_oaks_parcel=True")
         if flags_bits:
             parts.append("Game flags: " + ", ".join(flags_bits))
+
+        # Pokédex progress (RAM truth) — critical for objective
+        # planning. The agent's job is to catch one of each species,
+        # so knowing exactly what's owned vs seen vs unseen drives
+        # catching objectives.
+        owned_list = getattr(gs, "pokedex_owned_species", None) or []
+        seen_list = getattr(gs, "pokedex_seen_species", None) or []
+        parts.append(
+            f"\n== POKÉDEX PROGRESS — {len(owned_list)}/151 owned, "
+            f"{len(seen_list)}/151 seen =="
+        )
+        if owned_list:
+            parts.append("  Owned: " + ", ".join(owned_list))
+        else:
+            parts.append("  Owned: (none)")
+        # Show species that are seen but not yet owned — these are
+        # the closest targets for catching objectives.
+        seen_but_unowned = [s for s in seen_list if s not in owned_list]
+        if seen_but_unowned:
+            parts.append(
+                "  Seen but NOT owned (good catch targets — you've "
+                "already encountered these): "
+                + ", ".join(seen_but_unowned)
+            )
 
         # Next gym target
         next_gym = None

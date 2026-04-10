@@ -45,6 +45,37 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 - **run**: Only from wild battles. Use when enemy is low-threat and grinding isn't needed.
 - **switch**: When current Pokemon is at type disadvantage or low HP. switch_index is party slot 0-5.
 - **item**: Use healing items when lead Pokemon is below 30% HP in important battles.
+  Also used to throw Poké Balls at wild Pokemon you want to catch.
+
+## 🎯 POKÉDEX COMPLETION IS A PRIMARY GOAL
+
+One of the run's goals is to complete the Pokédex — catch one of
+every species. When you enter a wild battle, the context will tell
+you whether the enemy species is NEW (never owned) or already
+caught.
+
+**If the enemy is NEW:**
+1. **DO NOT one-shot it.** Super-effective moves and high-power
+   attacks will faint small wild Pokemon in a single hit. Use your
+   WEAKEST damaging move, or a status move (Growl, Tail Whip,
+   Leer, etc.) — anything that deals little or no damage.
+2. **Weaken to red HP** (roughly below 1/3). Catch rate in Gen 1
+   scales inversely with current HP — lower HP = much higher
+   chance the ball works.
+3. **Inflict a status condition** if you can (sleep via Sleep
+   Powder / Sing / Hypnosis is BEST; paralysis via Thunder Wave
+   / Stun Spore is second best). Status greatly boosts catch rate.
+4. **Then use `item`** to throw a Poké Ball. Pick the best ball in
+   your bag (Ultra > Great > Poké).
+5. If the ball fails, repeat until caught or out of balls.
+
+**If the enemy is already owned**, normal battle rules apply —
+fight, run, or switch as appropriate. Don't waste turns or balls
+on a species you already have (unless you need XP from it).
+
+**Never pick `item` to catch if your bag has zero Poké Balls** —
+check the bag section in the context. If you need balls, `run`
+from the encounter and buy balls at the next Poké Mart.
 - **cancel**: When the SWITCH/STATS/CANCEL menu is open on a Pokemon
   and you want to back out — picks the CANCEL option in that menu.
 - **advance**: Use when the battle is showing DIALOG TEXT that you
@@ -248,7 +279,8 @@ class BattleAgent:
                     switch_idx = parsed.get("switch_index", 1)
                     return self._switch_pokemon(switch_idx), reasoning
                 case "item":
-                    return self._use_item(), reasoning
+                    item_name = parsed.get("item_name", "")
+                    return self._use_item(gs, item_name), reasoning
                 case "cancel":
                     # SWITCH/STATS/CANCEL submenu — cursor starts on
                     # SWITCH, navigate down twice to CANCEL and select.
@@ -281,6 +313,30 @@ class BattleAgent:
         if gs.enemy:
             parts.append(f"\nEnemy: {gs.enemy.species} Lv{gs.enemy.level} [{'/'.join(gs.enemy.types)}]")
             parts.append(f"  HP: {gs.enemy.hp}/{gs.enemy.max_hp} Status: {gs.enemy.status}")
+            # Pokédex status for this species — critical for decision
+            # making in wild battles. If NEW, the agent should try to
+            # catch it instead of KO it.
+            owned = set(getattr(gs, "pokedex_owned_species", None) or [])
+            seen = set(getattr(gs, "pokedex_seen_species", None) or [])
+            species = gs.enemy.species
+            if gs.battle_type == "wild":
+                if species in owned:
+                    parts.append(
+                        f"  Pokédex: ✓ ALREADY OWNED — normal battle, "
+                        f"no need to catch. Fight, run, or switch as usual."
+                    )
+                elif species in seen:
+                    parts.append(
+                        f"  Pokédex: ⭐ NEW SPECIES (seen but not owned) — "
+                        f"CATCH THIS if possible. Weaken to red HP, apply "
+                        f"status if you can, then throw a Poké Ball (`item`)."
+                    )
+                else:
+                    parts.append(
+                        f"  Pokédex: ⭐⭐ NEW SPECIES (never seen) — "
+                        f"CATCH THIS if possible. Weaken to red HP, apply "
+                        f"status if you can, then throw a Poké Ball (`item`)."
+                    )
 
         lead = gs.party[0] if gs.party else None
         if lead:
@@ -377,15 +433,43 @@ class BattleAgent:
         actions.append("wait_60")
         return actions
 
-    def _use_item(self) -> List[str]:
-        """Navigate to BAG and use first usable item."""
-        # BAG is bottom-left of battle menu. Home the cursor to FIGHT
-        # first — if the cursor is sitting on PKMN, a bare press_down
-        # would land on RUN (bottom-right) and pressing A would run
-        # away when we meant to use an item.
-        return self._home_cursor() + [
-            "press_down", "press_a", "press_a", "press_a", "wait_60"
-        ]
+    def _use_item(self, gs=None, item_name: str = "") -> List[str]:
+        """Navigate to BAG and use an item.
+
+        If item_name is provided AND found in gs.bag, navigate to that
+        specific slot. Otherwise pick the first item in the bag. For
+        catching: the LLM should pass item_name="Poke Ball" (or
+        "Great Ball" / "Ultra Ball") so we land on the right slot.
+        """
+        # Find the target slot in the bag. If no match, fall through
+        # to slot 0 (first item) — caller's responsibility to ensure
+        # the bag isn't empty before picking `item`.
+        slot_index = 0
+        if gs is not None and item_name:
+            bag = getattr(gs, "bag", None) or []
+            target = item_name.strip().lower().replace("é", "e")
+            for i, entry in enumerate(bag):
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("item", "")).strip().lower().replace("é", "e")
+                # Allow fuzzy matches like "poke ball" / "pokeball"
+                # and "ball" → match on substring containment either way
+                if target == name or target in name or name in target:
+                    slot_index = i
+                    break
+
+        actions = self._home_cursor()
+        # Navigate to BAG (bottom-left of the 2x2 battle menu)
+        actions.append("press_down")
+        actions.append("press_a")  # open BAG
+        actions.append("wait_60")
+        # Scroll down to the target slot (bag cursor starts at slot 0)
+        for _ in range(slot_index):
+            actions.append("press_down")
+        actions.append("press_a")  # select item
+        actions.append("press_a")  # confirm USE (if prompted)
+        actions.append("wait_60")
+        return actions
 
     # ── Type Guessing ──────────────────────────────────────────────────
 

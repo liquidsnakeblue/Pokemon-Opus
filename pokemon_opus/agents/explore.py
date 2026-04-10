@@ -517,6 +517,20 @@ class ExploreAgent:
         if flags_bits:
             parts.append("Game flags: " + ", ".join(flags_bits))
 
+        # Pokédex progress — one of the run's two primary goals is to
+        # catch one of every species. Show a brief count here; the
+        # strategist gets the full species lists.
+        owned_n = getattr(gs, "pokedex_owned", 0)
+        seen_n = getattr(gs, "pokedex_seen", 0)
+        if getattr(gs, "has_pokedex", False):
+            parts.append(
+                f"Pokédex: {owned_n}/151 owned, {seen_n}/151 seen. "
+                f"Remember: catching NEW wild species is a primary "
+                f"goal — when you enter a wild battle, the battle "
+                f"agent will try to catch unowned species instead of "
+                f"KOing them."
+            )
+
         # Objectives
         active = gs.active_objectives
         if active:

@@ -1158,11 +1158,23 @@ class RedBlueMemoryReader(GameMemoryReader):
         """Read key story / event flags."""
         badges = self.emu.read_u8(ADDR_BADGES)
 
-        # Pokedex count
+        # Pokedex bitmasks — 19 bytes × 8 bits = 152 slots, only 151 used
+        # (slot 0 is unused; dex #1 Bulbasaur is bit index 0 in byte 0).
+        # `read_bits` already flattens to a list[bool].
         owned_bits = self.read_bits(ADDR_DEX_OWNED, 19)
         seen_bits = self.read_bits(ADDR_DEX_SEEN, 19)
-        dex_owned = sum(owned_bits[:151])
-        dex_seen = sum(seen_bits[:151])
+        owned_species: List[str] = []
+        seen_species: List[str] = []
+        # National dex numbers 1..151 → bit index 0..150
+        for i in range(151):
+            dex_no = i + 1
+            name = SPECIES_NAMES.get(dex_no, f"???({dex_no})")
+            if owned_bits[i]:
+                owned_species.append(name)
+            if seen_bits[i]:
+                seen_species.append(name)
+        dex_owned = len(owned_species)
+        dex_seen = len(seen_species)
 
         # Story flags — some common checks
         oak_parcel_byte = self.emu.read_u8(ADDR_OAK_PARCEL)
@@ -1177,6 +1189,8 @@ class RedBlueMemoryReader(GameMemoryReader):
             "has_oaks_parcel": bool(oak_parcel_byte & 0x02),
             "pokedex_owned": dex_owned,
             "pokedex_seen": dex_seen,
+            "pokedex_owned_species": owned_species,
+            "pokedex_seen_species": seen_species,
             "badges": gym_leaders_defeated,
             "badge_count": len(gym_leaders_defeated),
         }
