@@ -1000,9 +1000,15 @@ class RedBlueMemoryReader(GameMemoryReader):
             # Warp / door tiles — stairs, doors, ladders, holes
             if tile_id in warp_tile_ids or tile_id in door_tile_ids:
                 return "D"
-            # Interactive bookshelves / posters / statues
+            # Interactive bookshelves / posters / statues — these are
+            # IMPASSABLE static terrain. The agent can still face them
+            # and press A from an adjacent tile (the screenshot shows
+            # them clearly), but the pathfinder must treat them as walls.
+            # Previously they were "O" which collided with sprite-objects
+            # and got normalized to walkable floor by the accumulator,
+            # causing the pathfinder to route through bookshelves.
             if tile_id in bookshelf_tile_ids:
-                return "O"
+                return "#"
             # Walkable collision list
             if tile_id in walkable_tiles:
                 return "."
