@@ -90,7 +90,7 @@ class Orchestrator:
     def battle_agent(self):
         if self._battle_agent is None:
             from .agents.battle import BattleAgent
-            self._battle_agent = BattleAgent(self.config, self.llm)
+            self._battle_agent = BattleAgent(self.config, self.llm, game_client=self.game)
         return self._battle_agent
 
     @property

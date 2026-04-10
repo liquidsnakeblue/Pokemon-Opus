@@ -20,7 +20,7 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 ```json
 {
     "reasoning": "Brief tactical analysis (2-3 sentences)",
-    "decision": "fight|run|switch|item",
+    "decision": "fight|run|switch|item|cancel",
     "move_index": 0,
     "switch_index": 0,
     "item_name": ""
@@ -32,21 +32,15 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 - **run**: Only from wild battles. Use when enemy is low-threat and grinding isn't needed.
 - **switch**: When current Pokemon is at type disadvantage or low HP. switch_index is party slot 0-5.
 - **item**: Use healing items when lead Pokemon is below 30% HP in important battles.
+- **cancel**: When the SWITCH/STATS/CANCEL menu is open on a Pokemon
+  and you want to back out — picks the CANCEL option in that menu.
 
-## ⚠️ CRITICAL RULE: Switching with only one Pokemon
+## ⚠️ CRITICAL RULE
 
-You can ONLY choose **switch** if your party has 2 or more Pokemon. If
-you have only 1 Pokemon and you try to switch to it, the game shows
-the message **"<Pokemon> is already out!"** and you accomplish
-nothing — the turn is wasted dismissing the message. The agent has
-gotten stuck in this loop before.
-
-**If you have only 1 Pokemon and you see "<X> is already out!" in a
-dialog box, press `press_b` to dismiss the message and return to the
-main battle menu, then choose `fight` on the next turn.**
-
-Rule: with `len(party) < 2`, NEVER pick `decision: "switch"`. Pick
-`fight` (or `run`/`item` as appropriate) instead.
+If the options are SWITCH STATS CANCEL and you only have one Pokemon
+in your party, you must choose `cancel` and not switch, in order to
+return to the battle. The cursor starts on SWITCH at the top, so
+`cancel` navigates down to CANCEL and selects it.
 
 ## Gen 1 Battle Tips
 - Psychic type is overpowered (no real counters — Ghost is bugged, Bug moves are weak)
@@ -60,9 +54,10 @@ Rule: with `len(party) < 2`, NEVER pick `decision: "switch"`. Pick
 class BattleAgent:
     """Battle decision agent with type-aware heuristics and LLM fallback."""
 
-    def __init__(self, config, llm_client):
+    def __init__(self, config, llm_client, game_client=None):
         self.config = config
         self.llm = llm_client
+        self.game = game_client
 
     async def decide(self, gs, raw_state: Dict[str, Any]) -> Tuple[List[str], str]:
         """Decide battle action and return button sequence + reasoning."""
@@ -154,7 +149,35 @@ class BattleAgent:
     ) -> Tuple[List[str], str]:
         """LLM-powered decision for complex battles."""
         context = self._build_context(gs, analysis)
-        messages = [{"role": "user", "content": context}]
+
+        # Fetch a fresh screenshot so the LLM can see WHICH battle
+        # screen is currently displayed (main menu vs FIGHT move list
+        # vs Pokemon selection vs SWITCH/STATS/CANCEL submenu vs a
+        # message box). Without this the LLM has no idea what menu
+        # state it's in and may pick decisions that don't make sense
+        # for the current screen.
+        screenshot_b64 = None
+        if self.game is not None:
+            try:
+                screenshot_b64 = await self.game.screenshot_base64()
+            except Exception as e:
+                logger.warning(f"Battle screenshot capture failed: {e}")
+
+        if screenshot_b64:
+            messages = [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{screenshot_b64}",
+                        },
+                    },
+                    {"type": "text", "text": context},
+                ],
+            }]
+        else:
+            messages = [{"role": "user", "content": context}]
 
         try:
             result = await self.llm.chat_json(
@@ -170,6 +193,11 @@ class BattleAgent:
             usage = result.get("usage", {})
             gs.total_tokens += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
+            logger.info(
+                f"Battle decision: {decision} | party_size={len(gs.party)} | "
+                f"reasoning={reasoning[:200]!r}"
+            )
+
             match decision:
                 case "fight":
                     move_idx = parsed.get("move_index", 0)
@@ -181,6 +209,10 @@ class BattleAgent:
                     return self._switch_pokemon(switch_idx), reasoning
                 case "item":
                     return self._use_item(), reasoning
+                case "cancel":
+                    # SWITCH/STATS/CANCEL submenu — cursor starts on
+                    # SWITCH, navigate down twice to CANCEL and select.
+                    return ["press_down", "press_down", "press_a"], reasoning
                 case _:
                     return self._fight_move(0), f"Unknown decision '{decision}', using first move"
 
@@ -197,6 +229,7 @@ class BattleAgent:
         """Build battle context for LLM."""
         parts = []
         parts.append(f"Battle type: {gs.battle_type}")
+        parts.append(f"Party size: {len(gs.party)}")
 
         if gs.enemy:
             parts.append(f"\nEnemy: {gs.enemy.species} Lv{gs.enemy.level} [{'/'.join(gs.enemy.types)}]")
@@ -231,10 +264,23 @@ class BattleAgent:
 
     # ── Button Sequences ───────────────────────────────────────────────
 
+    # The Gen 1 main battle menu is a 2x2 grid:
+    #   FIGHT  PKMN
+    #   ITEM   RUN
+    # The cursor is NOT guaranteed to be on FIGHT when our action
+    # sequence runs — after cancelling out of the Pokemon submenu the
+    # cursor is on PKMN, which would re-open it on the next A press.
+    # Every sequence below first homes the cursor to FIGHT (top-left)
+    # by pressing left+up (both no-ops at the corner) and then
+    # navigates from there.
+    @staticmethod
+    def _home_cursor() -> List[str]:
+        return ["press_left", "press_up"]
+
     def _fight_move(self, move_index: int) -> List[str]:
         """Navigate battle menu to select FIGHT and then a specific move."""
-        # FIGHT is top-left (default position when battle menu opens)
-        actions = ["press_a"]  # Select FIGHT
+        actions = self._home_cursor()
+        actions.append("press_a")  # Select FIGHT
 
         # Navigate to move slot (0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right)
         match move_index:
@@ -254,12 +300,13 @@ class BattleAgent:
 
     def _run_action(self) -> List[str]:
         """Navigate to RUN (bottom-right of battle menu)."""
-        return ["press_right", "press_down", "press_a", "wait_60"]
+        return self._home_cursor() + ["press_right", "press_down", "press_a", "wait_60"]
 
     def _switch_pokemon(self, party_index: int) -> List[str]:
         """Navigate to switch Pokemon."""
+        actions = self._home_cursor()
         # Open Pokemon menu (right option in battle)
-        actions = ["press_right", "press_a"]  # Select POKEMON
+        actions.extend(["press_right", "press_a"])  # Select POKEMON
         # Navigate down to the target slot
         for _ in range(party_index):
             actions.append("press_down")
