@@ -13,6 +13,36 @@ logger = logging.getLogger(__name__)
 
 EXPLORE_SYSTEM_PROMPT = """You are an AI playing Pokemon Blue. You are exploring the overworld.
 
+## 🧭 TRUST HIERARCHY (read this first, it overrides everything below)
+
+You receive multiple kinds of information each turn. Trust them in this order:
+
+1. **Game RAM data** (Bag, Party HP, Position, Map, Flags, Sprites, Warps,
+   Door labels) — this is read directly from the emulator and is the
+   SOURCE OF TRUTH. If RAM says you have Oak's Parcel, you have it. If
+   RAM says your Charmander is at 1/19 HP, it is. **Never contradict RAM.**
+2. **The TILE MAP** — built from RAM. Source of truth for walls, doors,
+   grass, warps, and absolute positions.
+3. **The SCREENSHOT** — what the screen currently shows. Use it for
+   things RAM can't tell you (what text is in a dialog box, what menu
+   is currently visible). When the screenshot appears to contradict
+   RAM or the tile map, trust RAM and the tile map.
+4. **Your own previous-turn notes** — lowest trust. These are YOUR OWN
+   past words. They may be stale or wrong. Use them to stay coherent
+   across turns and detect when you're repeating yourself, but DO NOT
+   reason *from* them as if they were new information. If you said
+   "I see a dialog box" last turn, that is not evidence there's a
+   dialog box this turn — look at the current screenshot.
+
+## 🔁 STUCK → RESET RULE
+
+If you determine you are stuck or doing the same thing repeatedly
+without progress, you MUST IGNORE YOUR OWN PREVIOUS MESSAGES AND
+DECISIONS that led to that state. Re-evaluate based ONLY on the
+current trusted game state (RAM + tile map + screenshot). If nothing
+in your plan is working, throw the plan out and try the simplest,
+most fundamental action from the current state.
+
 You have TWO sources of spatial information:
 1. A GAME SCREEN IMAGE (what the player sees right now)
 2. A TILE MAP of the current area, built from RAM. This is the source of truth
@@ -102,6 +132,14 @@ Only use A when you deliberately want to:
 - Select a menu option
 
 For everything else in the overworld, B is the safer choice.
+
+## ⚠️ RULE: To exit a menu, press B — never select "CLOSE" / "EXIT"
+
+Backing out of menus ALWAYS uses B. Do not try to navigate to a
+"CLOSE" or "EXIT" option and press A — it's slower, it's failure-
+prone, and it's not how Game Boy menus work. This includes the
+main Start menu, the party Pokemon menu, the Bag menu, shop menus,
+and any YES/NO prompt where you want NO.
 
 ## ⚠️ CRITICAL RULE: Doors are DOORMATS — you must STEP THROUGH them
 
@@ -375,6 +413,74 @@ class ExploreAgent:
         parts.append(f"Location: {gs.map_name} (map_id={gs.map_id})")
         parts.append(f"Position: (y={gs.position[0]}, x={gs.position[1]}) facing {gs.facing}")
 
+        # === PARTY HEALTH === (prominent, near the top, with explicit
+        # tags so the LLM can't miss a critical HP situation buried in
+        # a compact team list)
+        if gs.party:
+            parts.append("")
+            parts.append("=== PARTY HEALTH (RAM truth) ===")
+            any_critical = False
+            any_low = False
+            any_fainted = False
+            all_fainted = True
+            for i, p in enumerate(gs.party):
+                if p.max_hp > 0:
+                    pct = (p.hp / p.max_hp) * 100
+                    pct_str = f"{pct:.0f}%"
+                else:
+                    pct = 100
+                    pct_str = "?"
+                if p.hp <= 0:
+                    tag = "[FAINTED]"
+                    any_fainted = True
+                elif pct <= 15:
+                    tag = "[CRITICAL]"
+                    any_critical = True
+                    all_fainted = False
+                elif pct <= 40:
+                    tag = "[LOW]"
+                    any_low = True
+                    all_fainted = False
+                else:
+                    tag = "[OK]"
+                    all_fainted = False
+                status = f" {p.status}" if p.status and p.status != "OK" else ""
+                parts.append(
+                    f"  {i+1}. {p.species} Lv{p.level}  HP {p.hp}/{p.max_hp} ({pct_str}) {tag}{status}"
+                )
+
+            # Explicit warning lines when anything is wrong. The LLM
+            # still decides what to do — this just guarantees the state
+            # is impossible to miss.
+            if all_fainted and gs.party:
+                parts.append(
+                    "  ⚠️ ALL PARTY POKEMON ARE FAINTED. You will black "
+                    "out on the next wild encounter or battle step. "
+                    "The ONLY safe action is to reach a Pokemon Center "
+                    "immediately — avoid grass, avoid trainers, take the "
+                    "shortest path to a PC (town with a red-roofed "
+                    "building)."
+                )
+            elif any_fainted:
+                parts.append(
+                    "  ⚠️ One or more party Pokemon has fainted. Consider "
+                    "healing at a Pokemon Center before the remaining "
+                    "Pokemon take more damage."
+                )
+            elif any_critical:
+                parts.append(
+                    "  ⚠️ CRITICAL HP on at least one Pokemon. A single "
+                    "wild encounter could knock it out and trigger a "
+                    "blackout (return to last Pokemon Center, lose half "
+                    "your money). Strongly consider retreating to a "
+                    "Pokemon Center instead of walking into more grass."
+                )
+            elif any_low:
+                parts.append(
+                    "  Note: party HP is low. A Pokemon Center visit "
+                    "would be a reasonable next objective."
+                )
+
         # Tile map — absolute coordinates, built from RAM
         tile_view = self._render_tile_map(gs)
         if tile_view:
@@ -384,13 +490,6 @@ class ExploreAgent:
 
         # Badges and progress
         parts.append(f"Badges: {gs.badge_count}/8 — {', '.join(gs.badges) if gs.badges else 'none'}")
-
-        # Party (compact)
-        if gs.party:
-            parts.append("\nTeam:")
-            for i, p in enumerate(gs.party):
-                hp_str = f"{p.hp}/{p.max_hp}" if p.max_hp > 0 else "?"
-                parts.append(f"  {i+1}. {p.species} Lv{p.level} HP:{hp_str}")
 
         # Bag — RAM truth for what items the player actually owns. The
         # objective text below may say "Get Oak's Parcel" but if the bag

@@ -19,6 +19,34 @@ STRATEGIST_SYSTEM_PROMPT = """You are a strategic advisor for an AI playing Poke
 Your job: analyze the current game state and generate/update objectives for the agent.
 You see the big picture — team composition, gym readiness, progression order, HM planning.
 
+## 🧭 TRUST HIERARCHY
+
+1. **Game RAM data** — Bag, Party, Badges, Game flags (has_pokedex,
+   has_oaks_parcel, pokedex_owned/seen), Location. This is the
+   SOURCE OF TRUTH. If the bag shows Oak's Parcel, the player has it.
+   If the badges list is `['Boulder']`, the player has beaten Brock.
+2. **Current objective list** — what's actively being worked on.
+3. **Recent action history** — context for what the agent has been
+   doing. May be stale or misleading.
+4. **Your own previous strategic reasoning** — lowest trust. If your
+   last review set an objective that the current RAM state proves
+   is already complete, abandon it.
+
+## 🔎 INVENTORY VERIFICATION (MANDATORY)
+
+Before creating ANY "Get X" or "Deliver X" objective involving a
+key item, you MUST first check the RAM bag listing. If the item
+is already in the bag, the quest is already complete or in progress
+for DELIVERY — do NOT create a "Get it" objective. This is the
+single most common source of wasted-turn loops: the agent spends
+dozens of turns trying to obtain an item it already owns.
+
+If the bag contradicts an existing objective (e.g. objective says
+"Get Oak's Parcel" but the bag has Oak's Parcel), IMMEDIATELY add
+that objective ID to `abandon_objective_ids` and replace it with
+the next logical step (e.g. "Deliver Oak's Parcel to Oak in Pallet
+Town"). Never leave a contradicted objective active.
+
 ## Response Format
 ```json
 {

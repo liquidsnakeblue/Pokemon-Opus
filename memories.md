@@ -28,3 +28,8 @@ Successfully picked up Oak's Parcel from the Viridian Mart clerk at position (5,
 
 **[ROUTE - CORE - MemoryStatus.ACTIVE] Route 1 connects to Viridian City at north exit** *(Ep 614948ec, T37)*
 Route 1's northern exit at position (0, 11) leads directly to Viridian City (map_id=1), arriving at position (35, 21). This is the main path between Pallet Town and Viridian City.
+
+## Map 12: Route 1
+
+**[POKEMON - PERMANENT - MemoryStatus.ACTIVE] Charmander learned Ember at early level** *(Ep c5a5f5e1, T8)*
+Charmander learned the fire-type move Ember after defeating an early wild Pokemon on Route 1. This gives us our first type-advantage attack.
