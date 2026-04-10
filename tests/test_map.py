@@ -137,3 +137,102 @@ async def test_map_data_in_serialized_state(game_client):
     assert "locations" in map_data
     assert len(map_data["locations"]) >= 1
     assert map_data["locations"][0]["positions"]  # Should have viewport tiles
+
+
+# ── Door label tests ──────────────────────────────────────────────
+
+
+def test_record_door_labels_unknown_destination():
+    """Doors to unvisited destinations get a placeholder 'map N' label."""
+    g = MapGraph()
+    # Pallet Town has 3 doors per the live RAM dump
+    warps = [
+        {"y": 5, "x": 5, "dest_warp": 0, "dest_map": 37},
+        {"y": 5, "x": 13, "dest_warp": 0, "dest_map": 39},
+        {"y": 11, "x": 12, "dest_warp": 1, "dest_map": 40},
+    ]
+    g.record_door_labels(parent_map_id=0, warps=warps, parent_name="Pallet Town")
+
+    assert g.get_door_label(0, 5, 5) == "map 37"
+    assert g.get_door_label(0, 5, 13) == "map 39"
+    assert g.get_door_label(0, 11, 12) == "map 40"
+
+
+def test_record_door_labels_resolves_after_visiting_destination():
+    """Once we visit a destination map, its door label upgrades from
+    'map N' to the real name."""
+    g = MapGraph()
+    warps = [{"y": 11, "x": 12, "dest_warp": 1, "dest_map": 40}]
+    g.record_door_labels(0, warps, parent_name="Pallet Town")
+    assert g.get_door_label(0, 11, 12) == "map 40"
+
+    # Walk into Oak's Lab — record_visit creates the node with its name
+    g.record_visit(40, "Oak's Lab", turn=5, position=(3, 4))
+
+    # Re-record (orchestrator does this every turn from /tiles)
+    g.record_door_labels(0, warps, parent_name="Pallet Town")
+    assert g.get_door_label(0, 11, 12) == "Oak's Lab"
+
+
+def test_door_labels_distinguish_three_pallet_town_buildings():
+    """The exact Pallet Town scenario that broke us — the agent kept
+    entering the wrong building because all `D` tiles were unlabeled."""
+    g = MapGraph()
+    # Visit each destination in turn so we know all three names
+    g.record_visit(37, "Red's House 1F", turn=1, position=(2, 3))
+    g.record_visit(39, "Blue's House", turn=2, position=(3, 4))
+    g.record_visit(40, "Oak's Lab", turn=3, position=(3, 4))
+
+    warps = [
+        {"y": 5, "x": 5, "dest_map": 37},
+        {"y": 5, "x": 13, "dest_map": 39},
+        {"y": 11, "x": 12, "dest_map": 40},
+    ]
+    g.record_door_labels(0, warps, parent_name="Pallet Town")
+
+    assert g.get_door_label(0, 5, 5) == "Red's House 1F"
+    assert g.get_door_label(0, 5, 13) == "Blue's House"
+    assert g.get_door_label(0, 11, 12) == "Oak's Lab"
+
+
+def test_door_labels_persist_through_save_load(tmp_path):
+    """Door labels survive a save/load cycle."""
+    g = MapGraph()
+    g.record_visit(40, "Oak's Lab", turn=1, position=(3, 4))
+    g.record_door_labels(
+        0,
+        [{"y": 11, "x": 12, "dest_map": 40}],
+        parent_name="Pallet Town",
+    )
+
+    p = tmp_path / "map.json"
+    g.save(p)
+
+    g2 = MapGraph()
+    assert g2.load(p)
+    assert g2.get_door_label(0, 11, 12) == "Oak's Lab"
+
+
+def test_record_door_labels_lazy_creates_parent_node():
+    """If the parent map node doesn't exist yet (first turn in a new
+    map, before record_visit has run), record_door_labels should still
+    work — it creates the node lazily."""
+    g = MapGraph()
+    assert 0 not in g.nodes
+    g.record_door_labels(
+        0,
+        [{"y": 11, "x": 12, "dest_map": 40}],
+        parent_name="Pallet Town",
+    )
+    assert 0 in g.nodes
+    assert g.nodes[0].name == "Pallet Town"
+    assert g.get_door_label(0, 11, 12) == "map 40"
+
+
+def test_get_door_label_returns_none_for_unknown():
+    """Querying a non-door cell or unknown map returns None."""
+    g = MapGraph()
+    assert g.get_door_label(0, 11, 12) is None
+    g.record_door_labels(0, [{"y": 11, "x": 12, "dest_map": 40}], "Pallet Town")
+    assert g.get_door_label(0, 1, 1) is None  # not a door
+    assert g.get_door_label(99, 11, 12) is None  # unknown map

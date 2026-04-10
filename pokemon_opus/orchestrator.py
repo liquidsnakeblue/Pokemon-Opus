@@ -82,7 +82,11 @@ class Orchestrator:
         if self._explore_agent is None:
             from .agents.explore import ExploreAgent
             self._explore_agent = ExploreAgent(
-                self.config, self.llm, game_client=self.game, grid=self.grid
+                self.config,
+                self.llm,
+                game_client=self.game,
+                grid=self.grid,
+                map_graph=self.map_mgr,
             )
         return self._explore_agent
 
@@ -265,6 +269,15 @@ class Orchestrator:
             # Stash live sprite list on gs for the explore agent's
             # pathfinder. Refreshed every turn — never persisted.
             self.gs.current_sprites = tile_data.get("sprites", []) if tile_data else []
+            # Record door labels from the live warp table. This lets the
+            # rendered tile map show "D[Oak's Lab]" instead of bare "D"
+            # for warps whose destination map name we already know.
+            if tile_data and self.map_mgr is not None and game_started:
+                warps = tile_data.get("warps", [])
+                if warps:
+                    self.map_mgr.record_door_labels(
+                        self.gs.map_id, warps, parent_name=self.gs.map_name
+                    )
         except Exception as e:
             logger.debug(f"Tile read failed: {e}")
             self.gs.current_sprites = []

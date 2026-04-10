@@ -28,6 +28,11 @@ class MapNode:
     has_pokemart: bool = False
     has_gym: bool = False
     positions_visited: Set[Tuple[int, int]] = field(default_factory=set)
+    # Door labels: (y, x) of a warp tile in this map → human-readable
+    # destination name (e.g. "Oak's Lab" or "map 40" before we know).
+    # Populated from RAM warp tables on every turn so labels appear as
+    # soon as the destination map's name is learned.
+    door_labels: Dict[Tuple[int, int], str] = field(default_factory=dict)
 
 
 @dataclass
@@ -131,6 +136,47 @@ class MapGraph:
 
         return None  # Unreachable
 
+    def record_door_labels(
+        self,
+        parent_map_id: int,
+        warps: List[Dict[str, Any]],
+        parent_name: str = "",
+    ) -> None:
+        """For each warp in the parent map, record the destination map's
+        name (if known) at the warp's coordinates. Updates progressively
+        as we discover more child maps — a door labeled "map 40" today
+        becomes "Oak's Lab" the moment we walk through it for the first
+        time."""
+        if parent_map_id not in self.nodes:
+            # Lazy-create the parent so labels can be recorded on the
+            # very first turn we see a map (record_visit runs later in
+            # the same turn cycle).
+            self.nodes[parent_map_id] = MapNode(
+                map_id=parent_map_id, name=parent_name
+            )
+        parent = self.nodes[parent_map_id]
+        for w in warps:
+            try:
+                y = int(w["y"])
+                x = int(w["x"])
+                dest_id = int(w["dest_map"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            dest_node = self.nodes.get(dest_id)
+            if dest_node and dest_node.name and dest_node.name != "Unknown":
+                parent.door_labels[(y, x)] = dest_node.name
+            else:
+                # Don't overwrite a known label with a placeholder.
+                if (y, x) not in parent.door_labels:
+                    parent.door_labels[(y, x)] = f"map {dest_id}"
+
+    def get_door_label(self, map_id: int, y: int, x: int) -> Optional[str]:
+        """Look up the destination label for a door at (y, x) of map_id."""
+        n = self.nodes.get(map_id)
+        if n is None:
+            return None
+        return n.door_labels.get((y, x))
+
     def get_neighbors(self, map_id: int) -> List[MapNode]:
         """Get all directly connected map locations."""
         neighbor_ids = self._adjacency.get(map_id, set())
@@ -195,6 +241,9 @@ class MapGraph:
                     "has_pokemart": n.has_pokemart,
                     "has_gym": n.has_gym,
                     "positions_visited": [list(p) for p in n.positions_visited],
+                    "door_labels": [
+                        [y, x, label] for (y, x), label in n.door_labels.items()
+                    ],
                 }
                 for nid, n in self.nodes.items()
             },
@@ -232,6 +281,10 @@ class MapGraph:
                     has_pokemart=ndata.get("has_pokemart", False),
                     has_gym=ndata.get("has_gym", False),
                     positions_visited={tuple(p) for p in ndata.get("positions_visited", [])},
+                    door_labels={
+                        (int(y), int(x)): str(label)
+                        for y, x, label in ndata.get("door_labels", [])
+                    },
                 )
 
             for edata in data.get("edges", []):

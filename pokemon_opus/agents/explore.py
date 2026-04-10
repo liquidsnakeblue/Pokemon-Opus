@@ -153,11 +153,12 @@ direction, not one.
 class ExploreAgent:
     """Exploration agent with screenshot vision and position tracking."""
 
-    def __init__(self, config, llm_client, game_client=None, grid=None):
+    def __init__(self, config, llm_client, game_client=None, grid=None, map_graph=None):
         self.config = config
         self.llm = llm_client
         self.game = game_client
         self.grid = grid  # GridAccumulator — optional, enables pathfinding
+        self.map_graph = map_graph  # MapGraph — optional, enables door labels
 
     async def decide(
         self, gs, raw_state: Dict[str, Any], game_client=None
@@ -582,6 +583,29 @@ class ExploreAgent:
             )
             for (sy, sx), ch in sorted(sprite_chars.items()):
                 lines.append(f"  {ch} at (y={sy}, x={sx})")
+
+        # Door labels — for every `D` cell in the rendered area, look up
+        # what destination map it leads to (learned from RAM warp tables
+        # + map names of previously-visited destinations). This is how
+        # the agent tells Oak's Lab apart from Red's House etc.
+        if self.map_graph is not None:
+            door_lines: List[str] = []
+            for y in range(min_y, max_y + 1):
+                for x in range(min_x, max_x + 1):
+                    if mg.cells.get((y, x)) != "D":
+                        continue
+                    label = self.map_graph.get_door_label(gs.map_id, y, x)
+                    if label:
+                        door_lines.append(f"  D at (y={y}, x={x}) → {label}")
+            if door_lines:
+                lines.append("")
+                lines.append(
+                    "Doors / warps visible on this map and where they "
+                    "lead (from the in-game warp table). Use these "
+                    "labels to pick the RIGHT door — Oak's Lab vs Red's "
+                    "House etc are otherwise indistinguishable:"
+                )
+                lines.extend(door_lines)
 
         return "\n".join(lines)
 
