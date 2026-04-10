@@ -36,6 +36,10 @@ PLAYER_COL = 4
 # Dynamic entities (P/N/I/O) are allowed because they resolve at plan time:
 # P is the start, N/I/O tiles are *under* walkable terrain and only blocked
 # if currently occupied — the caller filters those via `blocked` set.
+# D = doors/warps (stairs, ladders); you walk onto them to trigger warps.
+# ~ = tall grass (walkable but triggers encounters — the agent decides).
+# S (signs) and W (water) are NOT in this set — signs are non-walkable
+# objects you read by facing them, water needs Surf.
 WALKABLE_CHARS = {".", "P", "N", "I", "O", "D", "~"}
 
 # Characters we never overwrite with something "less known".
@@ -65,18 +69,77 @@ class MapGrid:
 
 
 class GridAccumulator:
-    """Stitches viewport observations into per-map grids.
+    """Per-map grid store with A* pathfinding.
 
-    Usage:
-        acc = GridAccumulator()
-        acc.observe(map_id, map_name, player_y, player_x, tile_grid, turn)
-        tile = acc.get_tile(map_id, y, x)
+    Two entry points:
+
+      set_full_map(map_id, name, full_grid, turn)
+          Wholesale replace for the authoritative whole-map snapshot
+          produced by read_tiles. This is the preferred path now that
+          the reader can give us the entire current map in one call.
+
+      observe(map_id, name, player_y, player_x, tile_grid, turn)
+          Legacy per-viewport stitching kept for backward-compat. Only
+          sees the camera window, leaves unseen cells unknown.
+
+    Both write into the same cell store. The pathfinder and queries
+    don't care which entry point produced the data.
     """
 
     def __init__(self) -> None:
         self.maps: Dict[int, MapGrid] = {}
 
-    # ── Observation ────────────────────────────────────────────────────
+    # ── Full-map snapshot (preferred) ──────────────────────────────────
+
+    def set_full_map(
+        self,
+        map_id: int,
+        map_name: str,
+        full_grid: List[List[str]],
+        turn: int,
+    ) -> int:
+        """Replace the entire stored grid for `map_id` with `full_grid`.
+
+        full_grid is indexed [y][x] in absolute game-cell coordinates
+        starting at (0, 0) — the same coordinate space as player_y /
+        player_x. Every non-empty cell is stored; dynamic characters
+        (P/N/I/O) are normalized to terrain ('.') so they don't leave
+        ghost entries when the player or an NPC moves.
+
+        Returns the number of cells now stored for this map.
+        """
+        if not full_grid or not full_grid[0]:
+            return 0
+
+        if map_id not in self.maps:
+            self.maps[map_id] = MapGrid(map_id=map_id, name=map_name)
+        mg = self.maps[map_id]
+        if map_name and not mg.name:
+            mg.name = map_name
+        mg.last_seen_turn = turn
+
+        # Wholesale replace — full_grid IS the authoritative snapshot.
+        mg.cells.clear()
+
+        rows = len(full_grid)
+        cols = len(full_grid[0])
+        for y in range(rows):
+            row = full_grid[y]
+            for x in range(min(cols, len(row))):
+                ch = row[x]
+                if not ch:
+                    continue
+                stored = self._terrain_of(ch)
+                if stored is None:
+                    # Dynamic entity sitting on an unknown terrain tile —
+                    # treat as walkable floor until we can see beneath it.
+                    mg.cells[(y, x)] = "."
+                else:
+                    mg.cells[(y, x)] = stored
+
+        return len(mg.cells)
+
+    # ── Observation (legacy viewport stitching) ───────────────────────
 
     def observe(
         self,

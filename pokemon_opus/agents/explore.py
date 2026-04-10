@@ -164,10 +164,18 @@ class ExploreAgent:
     def _pathfind_to(
         self, gs, target: Any
     ) -> List[str]:
-        """Run A* from the player's current position to `target` and convert
-        the resulting path into walk_* actions."""
+        """Run A* from the player's current absolute position to `target`
+        and return the resulting walk_* actions.
+
+        The pathfinder operates in ABSOLUTE map coordinates (the same
+        space as `gs.position` and the labels in the rendered tile map).
+        This function enforces that contract with a bounds check against
+        the stored map before calling A*, and logs a clear diagnostic
+        when something is off so failures aren't silent.
+        """
         if self.grid is None:
             return []
+
         # Normalize target to (y, x)
         try:
             if isinstance(target, dict):
@@ -175,22 +183,63 @@ class ExploreAgent:
             else:
                 ty, tx = int(target[0]), int(target[1])
         except Exception:
-            logger.warning(f"Invalid target format: {target!r}")
+            logger.warning(f"Pathfind: invalid target format: {target!r}")
             return []
 
         start = (int(gs.position[0]), int(gs.position[1]))
+        goal = (ty, tx)
+        map_id = gs.map_id
+
+        mg = self.grid.get_map(map_id)
+        if mg is None or not mg.cells:
+            logger.info(
+                f"Pathfind aborted: accumulator has no data for map_id={map_id}"
+            )
+            return []
+
+        # Bounds check: the target must be within the stored map's
+        # extent. If the LLM hallucinates a coordinate (e.g. 'col 8' on
+        # an 8-wide map), fail loudly rather than silently falling back.
+        bounds = mg.bounds()
+        if bounds is not None:
+            b_min_y, b_min_x, b_max_y, b_max_x = bounds
+            if not (b_min_y <= ty <= b_max_y and b_min_x <= tx <= b_max_x):
+                logger.info(
+                    f"Pathfind: target {goal} is OUTSIDE map bounds "
+                    f"y∈[{b_min_y},{b_max_y}] x∈[{b_min_x},{b_max_x}] "
+                    f"(player at {start}, map_id={map_id})"
+                )
+                return []
+
+        # Also sanity-check: the target cell must exist in the grid at
+        # all. If it doesn't, the pathfinder can't reason about it.
+        if mg.cells.get(goal) is None:
+            logger.info(
+                f"Pathfind: target {goal} has no known terrain in map_id={map_id} "
+                f"(player at {start}); falling back"
+            )
+            return []
+
         path = self.grid.find_path(
-            map_id=gs.map_id,
+            map_id=map_id,
             start=start,
-            goal=(ty, tx),
+            goal=goal,
         )
         if not path or len(path) < 2:
+            logger.info(
+                f"Pathfind: no route from {start} to {goal} in map_id={map_id} "
+                f"(cell at goal = {mg.cells.get(goal)!r})"
+            )
             return []
-        # path_to_actions lives on the accumulator
+
         from ..map.grid import GridAccumulator
         step_actions = GridAccumulator.path_to_actions(path)
-        # Convert generic "up/down/left/right" → emulator "walk_*" actions
-        return [f"walk_{a}" for a in step_actions]
+        walk_actions = [f"walk_{a}" for a in step_actions]
+        logger.info(
+            f"Pathfind: {start} → {goal} ({len(walk_actions)} steps) "
+            f"in map_id={map_id}"
+        )
+        return walk_actions
 
     def _build_messages(
         self, context: str, screenshot_b64: str | None
@@ -281,9 +330,27 @@ class ExploreAgent:
 
         return "\n".join(parts)
 
-    def _render_tile_map(self, gs, radius: int = 6) -> str:
-        """Render a window of the accumulated tile grid around the player,
-        labeled with absolute coordinates. Empty string if no grid yet."""
+    def _render_tile_map(self, gs) -> str:
+        """Render the ENTIRE accumulated map for the current map_id with
+        explicit absolute-coordinate labels on every row and column.
+
+        Output format (example, 8×8 bedroom, player at (2, 5)):
+
+            You are at (y=2, x=5) — marked 'P' below.
+            Coordinates in the row/column labels are ABSOLUTE and match
+            the `target` field exactly.
+
+                   x:00 01 02 03 04 05 06 07
+            y:00    #  #  #  #  #  #  #  #
+            y:01    #  #  #  .  .  .  .  D
+            y:02    .  .  .  .  .  P  .  .
+            y:03    .  .  .  .  .  .  .  .
+            y:04    .  .  .  #  .  .  .  .
+            ...
+
+        Every cell's coordinates are readable directly off the labels —
+        no relative counting required.
+        """
         if self.grid is None:
             return ""
         mg = self.grid.get_map(gs.map_id)
@@ -291,23 +358,51 @@ class ExploreAgent:
             return ""
 
         py, px = int(gs.position[0]), int(gs.position[1])
-        min_y, min_x = py - radius, px - radius
-        max_y, max_x = py + radius, px + radius
 
-        # Column header
-        lines = []
-        col_header = "     " + " ".join(f"{x % 10}" for x in range(min_x, max_x + 1))
-        lines.append(col_header)
+        # Use the stored map's bounds — this gives us the actual current
+        # map extent (not a camera window around the player).
+        bounds = mg.bounds()
+        if bounds is None:
+            return ""
+        min_y, min_x, max_y, max_x = bounds
+
+        # Always include the player's position in the visible range even
+        # if it's somehow outside the stored cells (shouldn't happen but
+        # defensive).
+        min_y = min(min_y, py)
+        min_x = min(min_x, px)
+        max_y = max(max_y, py)
+        max_x = max(max_x, px)
+
+        # Preamble — make the coordinate contract impossible to miss.
+        # The model has previously been confused by ambiguous single-digit
+        # column headers; this format uses explicit `y:NN` / `x:NN` labels
+        # for every row and column so a target can be read directly off
+        # the grid with no counting or arithmetic.
+        height = max_y - min_y + 1
+        width = max_x - min_x + 1
+        lines: List[str] = [
+            f"Current map is {height} rows × {width} cols.",
+            f"YOU are at (y={py}, x={px}), marked 'P' in the grid below.",
+            f"Valid targets MUST be in the ranges y∈[{min_y},{max_y}], x∈[{min_x},{max_x}].",
+            "The y/x numbers in the row/column labels are ABSOLUTE map",
+            "coordinates — use them directly in the `target` field. DO NOT",
+            "count rows or columns from the edge of the grid.",
+            "",
+        ]
+
+        col_nums = " ".join(f"{x:02d}" for x in range(min_x, max_x + 1))
+        lines.append(f"       x:{col_nums}")
 
         for y in range(min_y, max_y + 1):
             row_chars = []
             for x in range(min_x, max_x + 1):
                 if y == py and x == px:
-                    row_chars.append("P")
+                    row_chars.append(" P")
                 else:
                     ch = mg.cells.get((y, x))
-                    row_chars.append(ch if ch else "·")  # unknown = middle dot
-            lines.append(f"{y:>4} " + " ".join(row_chars))
+                    row_chars.append(f" {ch}" if ch else " ·")
+            lines.append(f"  y:{y:02d}  {' '.join(row_chars)}")
 
         return "\n".join(lines)
 

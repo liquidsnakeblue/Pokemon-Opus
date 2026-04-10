@@ -16,6 +16,72 @@ def _blank_viewport(fill: str = ".") -> list[list[str]]:
     return grid
 
 
+def test_set_full_map_replaces_snapshot():
+    """set_full_map wholesale-replaces the stored grid with the new snapshot."""
+    acc = GridAccumulator()
+    # 5x5 map with walls around the edge and floor inside
+    full = [
+        list("#####"),
+        list("#...#"),
+        list("#.P.#"),
+        list("#.D.#"),
+        list("#####"),
+    ]
+    n = acc.set_full_map(map_id=42, map_name="Test Room", full_grid=full, turn=1)
+
+    mg = acc.get_map(42)
+    assert mg is not None
+    assert mg.name == "Test Room"
+    # All 25 cells stored
+    assert n == 25
+    assert len(mg.cells) == 25
+    # Walls preserved
+    assert acc.get_tile(42, 0, 0) == "#"
+    assert acc.get_tile(42, 4, 4) == "#"
+    # Floor preserved
+    assert acc.get_tile(42, 1, 1) == "."
+    # Player cell normalized to terrain (not stored as 'P')
+    assert acc.get_tile(42, 2, 2) == "."
+    # Door preserved — so the pathfinder can path to it
+    assert acc.get_tile(42, 3, 2) == "D"
+
+
+def test_set_full_map_is_wholesale_replace():
+    """A second set_full_map call replaces the first entirely."""
+    acc = GridAccumulator()
+    acc.set_full_map(1, "A", [["#", "#"], ["#", "."]], turn=1)
+    assert acc.get_tile(1, 0, 0) == "#"
+    assert acc.get_tile(1, 1, 1) == "."
+
+    # Now replace with a different grid — larger, different content
+    acc.set_full_map(1, "A", [list(".....")] * 3, turn=2)
+    # Old (1, 1) is still present but now a floor (no out-of-bounds stale data)
+    assert acc.get_tile(1, 1, 1) == "."
+    # Cells beyond the old grid's bounds now exist
+    assert acc.get_tile(1, 2, 4) == "."
+    # Total cell count matches the new grid exactly
+    mg = acc.get_map(1)
+    assert len(mg.cells) == 15
+
+
+def test_set_full_map_enables_pathfinding_without_prior_visits():
+    """With set_full_map, A* can path to any known cell on turn one —
+    no need to walk the viewport over the destination first."""
+    acc = GridAccumulator()
+    # 5-wide corridor with walls on both sides
+    full = [
+        list("#####"),
+        list("#...#"),
+        list("#####"),
+    ]
+    acc.set_full_map(map_id=1, map_name="Corridor", full_grid=full, turn=1)
+    # Path from left end (1,1) to right end (1,3) — should succeed
+    path = acc.find_path(1, start=(1, 1), goal=(1, 3))
+    assert path is not None
+    assert path[0] == (1, 1)
+    assert path[-1] == (1, 3)
+
+
 def test_observe_creates_map_and_fills_viewport():
     acc = GridAccumulator()
     vp = _blank_viewport(".")

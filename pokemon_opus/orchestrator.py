@@ -196,21 +196,26 @@ class Orchestrator:
         # This runs before the agent decides, so the agent can query
         # self.grid for pathfinding in the current map.
         #
-        # IMPORTANT: do NOT feed the accumulator while we're still on the
-        # title screen / Oak's speech / naming sequence. During those
-        # screens the player position and map_id RAM fields hold default
-        # values ("Red's House 2F", random coords) and read_tiles is
-        # reading title-screen graphics — observing all of that would
-        # pollute the real map's grid with garbage. We use play_time as
-        # the gate: it stays at "0:00:00" until the game actually begins
-        # (the first frame the player has control after waking up in
-        # bed), then ticks up forever after.
+        # We use the `full_grid` field returned by read_tiles — the
+        # entire current map classified into a 2D array indexed
+        # [y][x] in absolute game-cell coordinates. This is strictly
+        # better than the old per-viewport stitching: the accumulator
+        # now has the whole room immediately, so A* can path to any
+        # known cell on the first turn.
+        #
+        # IMPORTANT: do NOT feed the accumulator while we're still on
+        # the title screen / Oak's speech / naming sequence. During
+        # those screens the player position and map_id RAM fields hold
+        # default values and read_tiles is reading title-screen graphics
+        # — observing all of that would pollute the real map's grid.
+        # We gate on play_time: it stays at "0:00:00" until the game
+        # actually begins, then ticks up forever after.
         tile_data: Optional[Dict[str, Any]] = None
         try:
             tile_data = await self.game.get_tiles()
-            tgrid = tile_data.get("grid", [])
+            full_grid = tile_data.get("full_grid", [])
             game_started = self.gs.play_time and self.gs.play_time != "0:00:00"
-            if tgrid and game_started:
+            if full_grid and game_started:
                 # First post-intro observation: discard any stale data
                 # that was accumulated under RAM-default coords/map_id.
                 if not self._game_started_seen:
@@ -221,12 +226,10 @@ class Orchestrator:
                             f"intro-era map(s) from accumulator"
                         )
                         self.grid.maps.clear()
-                self.grid.observe(
+                self.grid.set_full_map(
                     map_id=self.gs.map_id,
                     map_name=self.gs.map_name,
-                    player_y=self.gs.position[0],
-                    player_x=self.gs.position[1],
-                    tile_grid=tgrid,
+                    full_grid=full_grid,
                     turn=self.gs.turn_count,
                 )
         except Exception as e:
