@@ -33,6 +33,21 @@ Your job: decide what battle action to take based on your party, the enemy, and 
 - **switch**: When current Pokemon is at type disadvantage or low HP. switch_index is party slot 0-5.
 - **item**: Use healing items when lead Pokemon is below 30% HP in important battles.
 
+## ⚠️ CRITICAL RULE: Switching with only one Pokemon
+
+You can ONLY choose **switch** if your party has 2 or more Pokemon. If
+you have only 1 Pokemon and you try to switch to it, the game shows
+the message **"<Pokemon> is already out!"** and you accomplish
+nothing — the turn is wasted dismissing the message. The agent has
+gotten stuck in this loop before.
+
+**If you have only 1 Pokemon and you see "<X> is already out!" in a
+dialog box, press `press_b` to dismiss the message and return to the
+main battle menu, then choose `fight` on the next turn.**
+
+Rule: with `len(party) < 2`, NEVER pick `decision: "switch"`. Pick
+`fight` (or `run`/`item` as appropriate) instead.
+
 ## Gen 1 Battle Tips
 - Psychic type is overpowered (no real counters — Ghost is bugged, Bug moves are weak)
 - Speed determines critical hit rate — fast Pokemon crit more often
@@ -155,10 +170,30 @@ class BattleAgent:
             usage = result.get("usage", {})
             gs.total_tokens += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
+            # Hard guard: switching with <2 Pokemon is impossible — the
+            # menu only shows your current Pokemon and selecting it opens
+            # its summary, trapping the agent in the menu. Force a fight
+            # instead, regardless of what the LLM picked. Also prepend
+            # B presses to back out of any sub-menu we may already be
+            # stuck in (e.g. if the previous turn opened the Pokemon
+            # menu before this guard existed).
+            cancel_prefix: List[str] = []
+            if decision == "switch" and len(gs.party) < 2:
+                logger.info(
+                    f"Battle: LLM picked switch with {len(gs.party)} Pokemon — "
+                    f"overriding to fight (cannot switch with one Pokemon)"
+                )
+                decision = "fight"
+                cancel_prefix = ["press_b", "press_b", "press_b"]
+                reasoning = (
+                    f"[override] Cannot switch with only {len(gs.party)} Pokemon. "
+                    f"Backing out of any open menu and attacking. " + reasoning
+                )
+
             match decision:
                 case "fight":
                     move_idx = parsed.get("move_index", 0)
-                    return self._fight_move(move_idx), reasoning
+                    return cancel_prefix + self._fight_move(move_idx), reasoning
                 case "run":
                     return self._run_action(), reasoning
                 case "switch":
